@@ -90,9 +90,11 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = if ("${{ github.event.inputs.release_tag }}" -ne "") { "${{ github.event.inputs.release_tag }}" } elseif ("${{ github.ref_name }}" -match "^v") { "${{ github.ref_name }}" } else { "snapshot" }
           $stage = Join-Path $env:RUNNER_TEMP "stage-aarch64"
+          $nupkg = Join-Path $env:RUNNER_TEMP "conpty.nupkg"
           $zipName = "herdr-$tag-aarch64-pc-windows-msvc.zip"
           python scripts/package_windows_conpty.py stage `
             --architecture aarch64 `
+            --package $nupkg `
             --herdr-exe target/aarch64-pc-windows-msvc/release/herdr.exe `
             --output-dir $stage
           Compress-Archive -Path "$stage/*" -DestinationPath $zipName -Force
