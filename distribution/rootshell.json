@@ -1,0 +1,15 @@
+{
+  "base_version": "0.9.5",
+  "version": "0.1.10",
+  "notes": "Native Windows ARM64 release with ConPTY cursor alignment fix, rootshell update redirection, and unelevated client permission defaults.",
+  "assets": {
+    "windows-aarch64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.10/herdr-0.9.5-rootshell.0.1.10-aarch64-pc-windows-msvc.zip",
+      "sha256": "2af29d085e329a5619a7c474535b7926642440b654e5231351e6b08250457d3c",
+      "format": "zip"
+    }
+  },
+  "sha256": {
+    "windows-aarch64": "2af29d085e329a5619a7c474535b7926642440b654e5231351e6b08250457d3c"
+  }
+}

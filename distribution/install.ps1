@@ -894,6 +894,24 @@ try {
         Set-ManagedJunction -LinkPath $currentDir -TargetPath $releaseDir -ManagedTargetPrefix $releasesDir
         Set-ManagedJunction -LinkPath $visibleBinDir -TargetPath $releaseDir -ManagedTargetPrefix $standaloneRoot -AllowLegacyHerdrBinMigration $allowLegacyVisibleBinMigration
 
+        # Sync ~/.local/bin/herdr.exe HardLink and conpty bundle if ~/.local/bin exists
+        $localBinDir = Join-Path $env:USERPROFILE ".local\bin"
+        if (Test-Path -LiteralPath $localBinDir) {
+            $localHerdrBin = Join-Path $localBinDir "herdr.exe"
+            Remove-Item -LiteralPath $localHerdrBin -Force -ErrorAction SilentlyContinue
+            try {
+                New-Item -ItemType HardLink -Path $localHerdrBin -Target (Join-Path $releaseDir "herdr.exe") -ErrorAction Stop | Out-Null
+            } catch {
+                Copy-Item -LiteralPath (Join-Path $releaseDir "herdr.exe") -Destination $localHerdrBin -Force -ErrorAction SilentlyContinue
+            }
+            $srcConpty = Join-Path $releaseDir "conpty"
+            $dstConpty = Join-Path $localBinDir "conpty"
+            if (Test-Path -LiteralPath $srcConpty) {
+                Remove-Item -LiteralPath $dstConpty -Recurse -Force -ErrorAction SilentlyContinue
+                Copy-Item -LiteralPath $srcConpty -Destination $dstConpty -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         $ownedPathEntries = @($visibleBinDir, $currentDir)
         $userEnvironmentKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Environment")
         if ($null -eq $userEnvironmentKey) {

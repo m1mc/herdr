@@ -622,7 +622,7 @@ fn check_latest() -> Result<Option<ReleaseInfo>, String> {
             .and_then(Version::parse)
             .ok_or("invalid Rootshell build version")?;
         let manifest = fetch_json_manifest::<RootshellUpdateManifest>(
-            "https://github.com/kitknox/herdr/releases/download/rootshell-channel/rootshell.json",
+            "https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/distribution/rootshell.json",
         )?;
         return release_info_from_rootshell_manifest(&manifest, &current);
     }

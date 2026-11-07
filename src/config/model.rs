@@ -1039,8 +1039,7 @@ impl ImeCursorShape {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
-    /// Windows: allow ordinary same-account clients to control an elevated server. Default: false.
-    #[cfg(windows)]
+    /// Windows: allow ordinary same-account clients to control an elevated server. Default: true on Windows.
     pub allow_unelevated_clients: bool,
     /// Virtual terminal width used when no client is attached. Default: 120.
     pub headless_cols: u16,
@@ -1314,8 +1313,7 @@ impl<'de> Deserialize<'de> for ToastConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            #[cfg(windows)]
-            allow_unelevated_clients: false,
+            allow_unelevated_clients: cfg!(windows),
             headless_cols: crate::config::DEFAULT_HEADLESS_COLS,
             headless_rows: crate::config::DEFAULT_HEADLESS_ROWS,
         }
