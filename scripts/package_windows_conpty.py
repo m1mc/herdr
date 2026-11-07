@@ -458,13 +458,13 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     stage = subparsers.add_parser("stage")
-    stage.add_argument("--architecture", choices=("x86_64",), default="x86_64")
+    stage.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     stage.add_argument("--package", type=Path, required=True)
     stage.add_argument("--herdr-exe", type=Path, required=True)
     stage.add_argument("--output-dir", type=Path, required=True)
 
     archive = subparsers.add_parser("archive")
-    archive.add_argument("--architecture", choices=("x86_64",), default="x86_64")
+    archive.add_argument("--architecture", choices=("x86_64", "aarch64"), default="x86_64")
     archive.add_argument("--stage-dir", type=Path, required=True)
     archive.add_argument("--output", type=Path, required=True)
     subparsers.add_parser("build-local")

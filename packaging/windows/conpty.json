@@ -31,6 +31,23 @@
           "pe_machine": "0xaa64"
         }
       ]
+    },
+    "aarch64": {
+      "target_triple": "aarch64-pc-windows-msvc",
+      "files": [
+        {
+          "source": "runtimes/win-arm64/native/conpty.dll",
+          "destination": "conpty/conpty.dll",
+          "sha256": "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+          "pe_machine": "0xaa64"
+        },
+        {
+          "source": "build/native/runtimes/arm64/OpenConsole.exe",
+          "destination": "conpty/arm64/OpenConsole.exe",
+          "sha256": "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+          "pe_machine": "0xaa64"
+        }
+      ]
     }
   },
   "notices": [

@@ -1599,7 +1599,7 @@ fn parse_windows_platform_probe(stdout: &str) -> Result<Option<DetectedRemotePla
     };
     let setup_note = match arch.trim().to_ascii_uppercase().as_str() {
         "AMD64" | "X86_64" => None,
-        "ARM64" => Some(
+        "ARM64" | "AARCH64" => Some(
             "Windows ARM64 support is best-effort and uses x64 emulation; bugs and issues are expected.",
         ),
         arch => return Err(format!("unsupported remote platform: Windows {arch}")),

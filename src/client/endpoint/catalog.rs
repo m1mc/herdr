@@ -371,9 +371,31 @@ pub(super) fn store_private_json(
 }
 
 pub(crate) fn catalog_path() -> PathBuf {
-    crate::config::state_dir()
+    let primary = crate::config::state_dir()
         .join("client")
-        .join("endpoints.json")
+        .join("endpoints.json");
+    #[cfg(windows)]
+    if !primary.exists() && std::env::var_os("XDG_STATE_HOME").is_none() {
+        if let Some(profile) =
+            std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        {
+            let app_dir = if cfg!(debug_assertions) {
+                "herdr-dev"
+            } else {
+                "herdr"
+            };
+            let fallback = PathBuf::from(profile)
+                .join(".local")
+                .join("state")
+                .join(app_dir)
+                .join("client")
+                .join("endpoints.json");
+            if fallback.exists() {
+                return fallback;
+            }
+        }
+    }
+    primary
 }
 
 fn selection_path() -> PathBuf {

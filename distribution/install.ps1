@@ -388,23 +388,10 @@ function Test-HerdrReleaseComplete {
 
     $conptyRoot = Join-Path $ReleaseDir "conpty"
     if (-not (Test-RegularDirectory -Path $conptyRoot) -or
-        -not (Test-RegularDirectory -Path (Join-Path $conptyRoot "x64")) -or
         -not (Test-RegularDirectory -Path (Join-Path $conptyRoot "arm64"))) {
         return $false
     }
     $markerPath = Join-Path $conptyRoot "herdr-conpty.json"
-    $required = @(
-        "conpty/conpty.dll",
-        "conpty/x64/OpenConsole.exe",
-        "conpty/arm64/OpenConsole.exe",
-        "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-LICENSE.txt",
-        "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-NOTICE.md"
-    )
-    foreach ($relative in $required) {
-        if (-not (Test-RegularFile -Path (Join-Path $ReleaseDir ($relative -replace '/', '\')))) {
-            return $false
-        }
-    }
     if (-not (Test-RegularFile -Path $markerPath)) {
         return $false
     }
@@ -419,16 +406,37 @@ function Test-HerdrReleaseComplete {
         if ($null -eq $schemaProperty -or [int]$schemaProperty.Value -ne 1 -or
             $null -eq $packageProperty -or [string]$packageProperty.Value -ne "Microsoft.Windows.Console.ConPTY" -or
             $null -eq $versionProperty -or [string]::IsNullOrWhiteSpace([string]$versionProperty.Value) -or
-            $null -eq $architectureProperty -or [string]$architectureProperty.Value -ne "x86_64" -or
+            $null -eq $architectureProperty -or [string]$architectureProperty.Value -notin @("x86_64", "aarch64") -or
             $null -eq $filesProperty) {
             return $false
         }
 
-        $expectedConptyFiles = @(
-            "conpty/conpty.dll",
-            "conpty/x64/OpenConsole.exe",
-            "conpty/arm64/OpenConsole.exe"
+        $bundleArch = [string]$architectureProperty.Value
+        if ($bundleArch -eq "x86_64" -and -not (Test-RegularDirectory -Path (Join-Path $conptyRoot "x64"))) {
+            return $false
+        }
+
+        $expectedConptyFiles = if ($bundleArch -eq "aarch64") {
+            @(
+                "conpty/conpty.dll",
+                "conpty/arm64/OpenConsole.exe"
+            )
+        } else {
+            @(
+                "conpty/conpty.dll",
+                "conpty/x64/OpenConsole.exe",
+                "conpty/arm64/OpenConsole.exe"
+            )
+        }
+        $required = @($expectedConptyFiles) + @(
+            "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-LICENSE.txt",
+            "THIRD-PARTY-NOTICES/Microsoft.Windows.Console.ConPTY-NOTICE.md"
         )
+        foreach ($relative in $required) {
+            if (-not (Test-RegularFile -Path (Join-Path $ReleaseDir ($relative -replace '/', '\')))) {
+                return $false
+            }
+        }
         $markerFileNames = @($filesProperty.Value.PSObject.Properties | ForEach-Object { $_.Name })
         if (@(Compare-Object $expectedConptyFiles $markerFileNames).Count -ne 0) {
             return $false
@@ -702,9 +710,14 @@ switch ($architecture) {
         $targetTriple = "x86_64-pc-windows-msvc"
     }
     "Arm64" {
-        $target = "windows-x86_64"
-        $targetTriple = "x86_64-pc-windows-msvc"
-        Write-Step "Windows ARM64 detected; installing the x86_64 build under Windows emulation."
+        if ($useLocalPackage) {
+            $target = "windows-aarch64"
+            $targetTriple = "aarch64-pc-windows-msvc"
+        } else {
+            $target = "windows-x86_64"
+            $targetTriple = "x86_64-pc-windows-msvc"
+            Write-Step "Windows ARM64 detected; installing the x86_64 build under Windows emulation."
+        }
     }
     default {
         Write-Error "Unsupported Windows architecture: $architecture"

@@ -158,7 +158,11 @@ fn register(executable: &std::path::Path, scheme: &str) -> io::Result<()> {
     let parent = executable
         .parent()
         .ok_or_else(|| io::Error::other("missing executable directory"))?;
-    let host = parent.join("conpty/x64/OpenConsole.exe");
+    let host = if cfg!(target_arch = "aarch64") {
+        parent.join("conpty/arm64/OpenConsole.exe")
+    } else {
+        parent.join("conpty/x64/OpenConsole.exe")
+    };
     if !host.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,

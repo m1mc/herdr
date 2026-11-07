@@ -155,7 +155,7 @@ fn load_conpty() -> ConPtyFuncs {
 }
 
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-const CONPTY_FILES: &[(&str, &str)] = &[
+const CONPTY_FILES_X86_64: &[(&str, &str)] = &[
     (
         "conpty.dll",
         "39fba2713e2495117b1591ae8c32a3b904bea7aa66069cf7815e2844c76d75d8",
@@ -169,11 +169,23 @@ const CONPTY_FILES: &[(&str, &str)] = &[
         "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
     ),
 ];
+const CONPTY_FILES_AARCH64: &[(&str, &str)] = &[
+    (
+        "conpty.dll",
+        "db3d173640b172bafd42d5b541b638a9aeec1c7d0e40dd636bf02822a32c912c",
+    ),
+    (
+        "arm64/OpenConsole.exe",
+        "ed7622fd0d3bedc9ab9f122f5e58edf0def9e7999224f52dd395ba9f54edbe09",
+    ),
+];
 
 fn app_local_conpty_path() -> Result<Option<PathBuf>, String> {
-    if std::env::consts::ARCH != "x86_64" {
-        return Ok(None);
-    }
+    let conpty_files = match std::env::consts::ARCH {
+        "x86_64" => CONPTY_FILES_X86_64,
+        "aarch64" => CONPTY_FILES_AARCH64,
+        _ => return Ok(None),
+    };
     let executable = std::env::current_exe()
         .map_err(|error| format!("cannot locate the Herdr executable: {error}"))?;
     let executable_dir = executable
@@ -186,7 +198,7 @@ fn app_local_conpty_path() -> Result<Option<PathBuf>, String> {
     reject_reparse_point(&bundle)?;
 
     let mut expected = BTreeSet::from(["herdr-conpty.json".to_string()]);
-    for (relative, expected_hash) in CONPTY_FILES {
+    for (relative, expected_hash) in conpty_files {
         expected.insert((*relative).to_string());
         verify_bundle_file(&bundle, relative, expected_hash)?;
     }
