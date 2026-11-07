@@ -43,10 +43,8 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/kitknox/herdr.git || true
-          git fetch upstream master --tags
-          git checkout master
-          git merge --ff-only upstream/master || git reset --hard upstream/master
-          git push origin master --tags --force-with-lease
+          git fetch upstream master:master --tags
+          git push origin master:master --tags
 
   build-arm64:
     name: Build Windows ARM64 (Native / Cross)
