@@ -3,15 +3,21 @@
 set -eu
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+repo=${HERDR_REPO:-m1mc/herdr}
 tag=${1:-}
 if [ -z "$tag" ]; then
-    curl -fL --retry 3 -o "$tmp/rootshell.json" https://github.com/kitknox/herdr/releases/download/rootshell-channel/rootshell.json
+    curl -fL --retry 3 -o "$tmp/rootshell.json" "https://raw.githubusercontent.com/$repo/arm64-rootshell/distribution/rootshell.json"
     version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[,[:space:]]*$/\1/p' "$tmp/rootshell.json")
-    tag=rootshell-v$version
+    base_ver=$(sed -n 's/^[[:space:]]*"base_version":[[:space:]]*"\([^"]*\)"[,[:space:]]*$/\1/p' "$tmp/rootshell.json")
+    if [ -n "$base_ver" ]; then
+        tag="v${base_ver}-rootshell.${version}"
+    else
+        tag="rootshell-v$version"
+    fi
 fi
-printf '%s\n' "$tag" | grep -Eq '^rootshell-v[0-9]+\.[0-9]+\.[0-9]+$' || {
-    echo 'Expected rootshell-vMAJOR.MINOR.PATCH' >&2; exit 1;
-}
+if ! printf '%s\n' "$tag" | grep -Eq '^(rootshell-v[0-9]+\.[0-9]+\.[0-9]+|v[^-]+-rootshell\.[0-9]+\.[0-9]+\.[0-9]+)$'; then
+    echo 'Expected rootshell-vMAJOR.MINOR.PATCH or vBASE-rootshell.MAJOR.MINOR.PATCH' >&2; exit 1;
+fi
 case "$(uname -s)" in
     Darwin) os=macos ;;
     Linux) os=linux ;;
@@ -29,7 +35,7 @@ case "${SHELL:-}" in
     *) echo 'Use this installer from a bash, zsh, or fish login account.' >&2; exit 1 ;;
 esac
 asset=herdr-$os-$arch
-base=https://github.com/kitknox/herdr/releases/download/$tag
+base=https://github.com/$repo/releases/download/$tag
 curl -fL --retry 3 -o "$tmp/$asset" "$base/$asset"
 curl -fL --retry 3 -o "$tmp/$asset.sha256" "$base/$asset.sha256"
 (

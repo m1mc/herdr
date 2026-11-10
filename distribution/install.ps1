@@ -680,6 +680,10 @@ function Resolve-HerdrVersion {
         [string]$SelectedChannel
     )
 
+    if ($null -ne $Manifest.base_version -and $null -ne $Manifest.version -and "$($Manifest.version)" -notmatch "^0\.9\.") {
+        return "$($Manifest.base_version)-rootshell.$($Manifest.version)"
+    }
+
     if ($SelectedChannel -eq "preview") {
         if ([string]::IsNullOrWhiteSpace([string]$Manifest.base_version) -or [string]::IsNullOrWhiteSpace([string]$Manifest.build_id)) {
             throw "Preview manifest is missing base_version or build_id."
@@ -710,14 +714,8 @@ switch ($architecture) {
         $targetTriple = "x86_64-pc-windows-msvc"
     }
     "Arm64" {
-        if ($useLocalPackage) {
-            $target = "windows-aarch64"
-            $targetTriple = "aarch64-pc-windows-msvc"
-        } else {
-            $target = "windows-x86_64"
-            $targetTriple = "x86_64-pc-windows-msvc"
-            Write-Step "Windows ARM64 detected; installing the x86_64 build under Windows emulation."
-        }
+        $target = "windows-aarch64"
+        $targetTriple = "aarch64-pc-windows-msvc"
     }
     default {
         Write-Error "Unsupported Windows architecture: $architecture"
@@ -792,11 +790,7 @@ if ($useLocalPackage) {
     }
 
     if ([string]::IsNullOrWhiteSpace($ManifestUrl)) {
-        $ManifestUrl = if ($Channel -eq "preview") {
-            "https://herdr.dev/preview.json"
-        } else {
-            "https://herdr.dev/latest.json"
-        }
+        $ManifestUrl = "https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/distribution/rootshell.json"
     }
 
     Write-Step "Fetching Herdr $Channel manifest"

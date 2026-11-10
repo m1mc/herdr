@@ -10,15 +10,19 @@ import tempfile
 
 
 def manifest(tag, commit, root=Path('.'), assets_dir=Path('release-assets')):
-    match = re.fullmatch(r'rootshell-v(\d+\.\d+\.\d+)', tag)
+    match = re.fullmatch(r'(?:rootshell-v|v[^-]+-rootshell\.)(\d+\.\d+\.\d+)', tag)
     if not match:
-        raise ValueError('Expected rootshell-vMAJOR.MINOR.PATCH')
+        raise ValueError('Expected rootshell-vMAJOR.MINOR.PATCH or vBASE-rootshell.MAJOR.MINOR.PATCH')
+    repo = os.environ.get('GITHUB_REPOSITORY', 'm1mc/herdr')
     assets = {}
-    for target in ('linux-x86_64', 'linux-aarch64', 'macos-x86_64', 'macos-aarch64', 'windows-x86_64'):
+    for target in ('linux-x86_64', 'linux-aarch64', 'macos-x86_64', 'macos-aarch64', 'windows-x86_64', 'windows-aarch64'):
         name = f'herdr-{target}' + ('.zip' if target.startswith('windows') else '')
+        asset_file = assets_dir / name
+        if not asset_file.exists():
+            continue
         assets[target] = {
-            'url': f'https://github.com/kitknox/herdr/releases/download/{tag}/{name}',
-            'sha256': hashlib.sha256((assets_dir / name).read_bytes()).hexdigest(),
+            'url': f'https://github.com/{repo}/releases/download/{tag}/{name}',
+            'sha256': hashlib.sha256(asset_file.read_bytes()).hexdigest(),
         }
         if target.startswith('windows'):
             assets[target]['format'] = 'zip'
@@ -42,7 +46,7 @@ def should_promote(current, candidate):
 
 
 def promote():
-    repo = 'kitknox/herdr'
+    repo = os.environ.get('GITHUB_REPOSITORY', 'm1mc/herdr')
     def gh(*args):
         return subprocess.check_output(['gh', *args, '--repo', repo], text=True)
     # Read failures must abort promotion, rather than looking like an empty channel.

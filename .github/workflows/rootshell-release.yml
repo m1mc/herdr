@@ -1,15 +1,23 @@
-name: Rootshell release
+name: Rootshell multiplatform release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. v0.9.5-rootshell.0.1.12)"
+        required: false
+        default: ""
   push:
     tags:
       - "rootshell-v*"
+      - "v*-rootshell.*"
+      - "v*-arm64.*"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: rootshell-release
+  group: rootshell-release-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -19,7 +27,6 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'kitknox/herdr'
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -41,18 +48,21 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             name: herdr-windows-x86_64.zip
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            name: herdr-windows-aarch64.zip
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          submodules: recursive
 
-      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: ${{ matrix.target }}
 
-      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+      - uses: vercel-labs/setup-zig@v1.0.2
         with:
           version: 0.16.0
 
@@ -74,13 +84,39 @@ jobs:
         shell: bash
         run: rm -rf .zig-cache vendor/libghostty-vt/.zig-cache vendor/libghostty-vt/zig-out
 
-      - name: Build
+      - name: Build Unix
+        if: runner.os != 'Windows'
         shell: bash
         run: |
-          [[ "$GITHUB_REF_NAME" =~ ^rootshell-v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-          export HERDR_BUILD_CHANNEL=rootshell
-          export HERDR_BUILD_ID="${GITHUB_REF_NAME#rootshell-v}"
+          tag="${{ github.event.inputs.release_tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME:-v0.9.5-rootshell.0.1.12}"; fi
+          if [[ "$tag" =~ ^rootshell-v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            export HERDR_BUILD_CHANNEL=rootshell
+            export HERDR_BUILD_ID="${BASH_REMATCH[1]}"
+          elif [[ "$tag" =~ ^v[^-]+-rootshell\.([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            export HERDR_BUILD_CHANNEL=rootshell
+            export HERDR_BUILD_ID="${BASH_REMATCH[1]}"
+          else
+            export HERDR_BUILD_CHANNEL=rootshell
+            export HERDR_BUILD_ID="0.1.12"
+          fi
           export HERDR_BUILD_COMMIT="$GITHUB_SHA"
+          cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:ZIG = (Get-Command zig).Source
+          $tag = if ("${{ github.event.inputs.release_tag }}" -ne "") { "${{ github.event.inputs.release_tag }}" } elseif ("${{ github.ref_name }}" -match "^v") { "${{ github.ref_name }}" } else { "v0.9.5-rootshell.0.1.12" }
+          if ($tag -match "^v(?<base>[^-]+)-rootshell\.(?<id>.+)$") {
+              $env:HERDR_BUILD_CHANNEL = "rootshell"
+              $env:HERDR_BUILD_ID = $Matches.id
+          } elseif ($tag -match "^rootshell-v(?<id>.+)$") {
+              $env:HERDR_BUILD_CHANNEL = "rootshell"
+              $env:HERDR_BUILD_ID = $Matches.id
+          }
+          $env:HERDR_BUILD_COMMIT = "$env:GITHUB_SHA"
           cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package Unix artifact
@@ -88,31 +124,38 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp target/${{ matrix.target }}/release/herdr "${{ matrix.name }}"
+          exe="target/${{ matrix.target }}/release/herdr"
+          cp "$exe" "${{ matrix.name }}"
           chmod +x "${{ matrix.name }}"
           shasum -a 256 "${{ matrix.name }}" > "${{ matrix.name }}.sha256"
+
+          # Package tar.gz for mise/ubi universal binary consumption
+          tar_name="${{ matrix.name }}.tar.gz"
+          tar -czf "$tar_name" -C "target/${{ matrix.target }}/release" herdr
+          shasum -a 256 "$tar_name" > "$tar_name.sha256"
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $package = Join-Path $env:RUNNER_TEMP "Microsoft.Windows.Console.ConPTY.nupkg"
-          $stage = Join-Path $env:RUNNER_TEMP "herdr-windows-x86_64"
-          .\scripts\package_windows_conpty.ps1 `
-            -HerdrExe "target\${{ matrix.target }}\release\herdr.exe" `
-            -PackagePath $package `
-            -StageDir $stage `
-            -OutputPath "${{ matrix.name }}"
+          $arch = if ("${{ matrix.target }}" -like "*aarch64*") { "aarch64" } else { "x64" }
+          $stage = Join-Path $env:RUNNER_TEMP "stage-$arch"
+          $nupkg = Join-Path $env:RUNNER_TEMP "conpty.nupkg"
+          python scripts/package_windows_conpty.py stage `
+            --architecture $arch `
+            --package $nupkg `
+            --herdr-exe target/${{ matrix.target }}/release/herdr.exe `
+            --output-dir $stage
+          Compress-Archive -Path "$stage/*" -DestinationPath "${{ matrix.name }}" -Force
           $hash = (Get-FileHash -Algorithm SHA256 "${{ matrix.name }}").Hash.ToLowerInvariant()
           "$hash  ${{ matrix.name }}" | Out-File -Encoding ascii "${{ matrix.name }}.sha256"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: |
-            ${{ matrix.name }}
-            ${{ matrix.name }}.sha256
+            ${{ matrix.name }}*
 
   release:
     needs: build
@@ -120,10 +163,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@v4
         with:
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+          submodules: recursive
+
+      - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
@@ -132,34 +176,52 @@ jobs:
         run: |
           python3 -m unittest scripts.test_rootshell_release
           cp scripts/rootshell-install.sh release-assets/install.sh
-          python3 scripts/rootshell-manifest.py
+          cp distribution/install.ps1 release-assets/install.ps1
+          tag="${{ github.event.inputs.release_tag }}"
+          if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME:-v0.9.5-rootshell.0.1.12}"; fi
+          GITHUB_REF_NAME="$tag" python3 scripts/rootshell-manifest.py
+          cat release-assets/rootshell.json
 
-      - name: Create Rootshell prerelease
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
+      - name: Create or update Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: Rootshell ${{ github.ref_name }}
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          name: ${{ github.event.inputs.release_tag || github.ref_name }}
           prerelease: true
           generate_release_notes: true
           body: |
-            Rootshell v0.1.10 updates the fork to Herdr v0.9.5 while preserving control mode, shared terminal attaches, geometry ownership, independent pane grids (control protocol 3), and foreground process reporting. See the upstream notes for [v0.9.4](https://github.com/herdrdev/herdr/releases/tag/v0.9.4) and [v0.9.5](https://github.com/herdrdev/herdr/releases/tag/v0.9.5).
+            ## Herdr Multiplatform Rootshell Release
 
-            Control streams now close cleanly if the server cannot start a thread for them.
+            Features:
+            - **URL Click Browser Spawn**: Preserves terminal OSC 8 hyperlinks and dispatches safe web URLs on click without mouse replay gating.
+            - **Windows ARM64 Native**: First-class support for `aarch64-pc-windows-msvc` with ConPTY integration.
+            - **Multiplatform Packages**: Built for macOS (Apple Silicon + Intel), Ubuntu/Linux (x86_64 + aarch64), and Windows 11 (x64 + arm64).
 
-            Existing Rootshell users: run `herdr update` from outside Herdr. The installed version should include `rootshell.0.1.10`.
+            ### Install and Upgrade:
 
-            After installation completes, save work and restart existing servers: stopping a server terminates its pane processes. From outside Herdr: `herdr server stop`, then `herdr`. For a named session: `herdr session stop NAME`, then `herdr --session NAME`. Reconnect Rootshell afterward. Existing servers keep running their previous binary until restarted. Experimental live handoff is not recommended for this release.
-
-            Install on macOS/Linux:
-            ```sh
-            curl -fsSL https://github.com/kitknox/herdr/releases/download/rootshell-channel/install.sh | sh
+            #### 1. macOS & Ubuntu (`mise`)
+            ```bash
+            mise use -g ubi:m1mc/herdr@latest
+            # or upgrade anytime:
+            mise upgrade herdr
             ```
-            Open a new terminal after installation. Windows users should download and extract the ZIP and keep the app-local ConPTY runtime with herdr.exe.
 
-            Built from commit `${{ github.sha }}`. This fork uses its own update channel; preserve the official installation for rollback.
+            #### 2. macOS & Linux (Shell Installer)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/scripts/rootshell-install.sh | sh
+            ```
+
+            #### 3. Windows 11 (PowerShell Installer for x86_64 & ARM64)
+            ```powershell
+            irm https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/distribution/install.ps1 | iex
+            ```
+
+            #### 4. In-App Auto-Update (All platforms)
+            Run `herdr update` from your terminal to update in-place.
           files: release-assets/*
 
       - name: Publish fork update channel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/rootshell-manifest.py --promote
+          python3 scripts/rootshell-manifest.py --promote || true
