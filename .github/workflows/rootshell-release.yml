@@ -139,7 +139,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $arch = if ("${{ matrix.target }}" -like "*aarch64*") { "aarch64" } else { "x64" }
+          $arch = if ("${{ matrix.target }}" -like "*aarch64*") { "aarch64" } else { "x86_64" }
           $stage = Join-Path $env:RUNNER_TEMP "stage-$arch"
           $nupkg = Join-Path $env:RUNNER_TEMP "conpty.nupkg"
           python scripts/package_windows_conpty.py stage `
