@@ -26,6 +26,13 @@ pub(super) fn render_collapsed(
     let mut selected_row = None;
     let reveal = std::mem::take(state.reveal_navigation_workspace);
     for endpoint in state.endpoints {
+        if !config.endpoint_visible(
+            &endpoint.endpoint_id,
+            endpoint.status,
+            state.active_endpoint_id,
+        ) {
+            continue;
+        }
         total_rows += 1;
         if state.collapsed_endpoints.contains(&endpoint.endpoint_id) {
             continue;
@@ -60,6 +67,13 @@ pub(super) fn render_collapsed(
     let mut skip = *state.workspace_scroll;
     let mut y = workspace_area.y;
     for (index, endpoint) in state.endpoints.iter().enumerate() {
+        if !config.endpoint_visible(
+            &endpoint.endpoint_id,
+            endpoint.status,
+            state.active_endpoint_id,
+        ) {
+            continue;
+        }
         if y >= workspace_area.bottom() {
             break;
         }
@@ -275,6 +289,13 @@ pub(super) fn render_expanded(
     }
     let mut rows = Vec::new();
     for (endpoint_index, endpoint) in state.endpoints.iter().enumerate() {
+        if !config.endpoint_visible(
+            &endpoint.endpoint_id,
+            endpoint.status,
+            state.active_endpoint_id,
+        ) {
+            continue;
+        }
         rows.push(Row::Endpoint(endpoint_index));
         if state.collapsed_endpoints.contains(&endpoint.endpoint_id) {
             continue;

@@ -284,7 +284,7 @@ fn delayed_link_fallback_does_not_replay_against_changed_geometry() {
             );
             assert!(
                 actions.is_empty(),
-                "late replies must not replay or open links"
+                "late replies must not replay or open links: changed={changed}, url={url:?}"
             );
             assert!(state.url_click_consumes_until_up);
         }
@@ -925,7 +925,7 @@ fn styled_client_composition_preserves_pane_hyperlinks() {
                 assert_eq!(
                     terminal.viewport_hyperlink_uri(x, u32::from(y)).unwrap(),
                     (!capture).then_some(uri.to_owned()),
-                    "host link ownership must follow configured capture for {uri}"
+                    "host link ownership must follow configured capture for {uri}, phase={phase}, drawn_cursor={draw_host_cursor}"
                 );
                 let (_, label) = terminal.screen_cell(x, u32::from(y)).unwrap();
                 assert_eq!(label, expected.chars().map(u32::from).collect::<Vec<_>>());

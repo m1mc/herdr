@@ -19,6 +19,14 @@ impl ClientShellState {
                 outcome.resize = true;
                 self.persist_chrome_preferences(outcome);
             }
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleOfflineHosts) => {
+                if self.save_settings_edit(
+                    crate::config::ConfigEdit::HideOfflineHosts(!self.config.hide_offline_hosts),
+                    outcome,
+                ) {
+                    self.reveal_navigation_workspace = true;
+                }
+            }
             crate::input::KeybindMatch::Action(action) => {
                 if self.workspace_preview_action_blocked()
                     && matches!(
@@ -699,7 +707,7 @@ impl ClientShellState {
                     Ok(crate::api::schema::ResponseResult::PaneLinkActivated {
                         url: Some(url),
                         handled: false,
-                    }) if crate::app::actions::safe_web_url(&url).is_some() => {
+                    }) if replay.is_some() && crate::app::actions::safe_web_url(&url).is_some() => {
                         self.url_click_consumes_until_up = completed_before_release;
                         (false, vec![ClientShellAction::OpenSafeWebUrl(url)])
                     }

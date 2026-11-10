@@ -110,6 +110,18 @@ impl ClientShellState {
 }
 
 impl ClientShellConfig {
+    pub(super) fn endpoint_visible(
+        &self,
+        endpoint_id: &ClientEndpointId,
+        status: ClientEndpointStatus,
+        active_endpoint_id: &ClientEndpointId,
+    ) -> bool {
+        !self.hide_offline_hosts
+            || endpoint_id.is_local()
+            || status == ClientEndpointStatus::Online
+            || endpoint_id == active_endpoint_id
+    }
+
     pub(crate) fn from_config(config: &Config) -> Self {
         let theme_runtime = crate::app::client_theme_runtime_from_config(config);
         Self {
@@ -126,6 +138,7 @@ impl ClientShellConfig {
             agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
+            hide_offline_hosts: config.ui.hide_offline_hosts,
             toast_delivery: config.ui.toast.delivery,
             toast_delay_seconds: config.ui.toast.delay_seconds,
             toast_position: config.ui.toast.herdr.position,
@@ -353,6 +366,7 @@ impl ClientShellConfig {
                 self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
                 self.sound_enabled = ui.sound.enabled;
+                self.hide_offline_hosts = ui.hide_offline_hosts;
                 self.toast_delivery = ui.toast.delivery;
                 self.toast_delay_seconds = ui.toast.delay_seconds;
                 self.toast_position = ui.toast.herdr.position;

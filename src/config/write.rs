@@ -4,6 +4,7 @@ pub(crate) enum ConfigEdit<'a> {
     StatusIndicators(super::StatusIndicatorStyle),
     Sound(bool),
     ToastDelivery(super::ToastDelivery),
+    HideOfflineHosts(bool),
 }
 
 impl ConfigEdit<'_> {
@@ -13,6 +14,7 @@ impl ConfigEdit<'_> {
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
             Self::ToastDelivery(_) => "toast setting",
+            Self::HideOfflineHosts(_) => "hide offline hosts setting",
         }
     }
 
@@ -41,6 +43,9 @@ impl ConfigEdit<'_> {
                 };
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
+            }
+            Self::HideOfflineHosts(hide) => {
+                super::upsert_section_bool(content, "ui", "hide_offline_hosts", hide)
             }
         }
     }
@@ -105,5 +110,18 @@ mod tests {
             toml::from_str::<toml::Value>(&written).is_ok(),
             "written config is not valid TOML: {written:?}"
         );
+    }
+
+    #[test]
+    fn config_edit_hide_offline_hosts_applies() {
+        let initial = "[ui]\nsidebar_width = 32\n";
+        let updated = ConfigEdit::HideOfflineHosts(true).apply(initial);
+        let config: super::super::Config = toml::from_str(&updated).expect("valid config");
+        assert!(config.ui.hide_offline_hosts);
+        assert_eq!(config.ui.sidebar_width, 32);
+        let updated_false = ConfigEdit::HideOfflineHosts(false).apply(&updated);
+        let config: super::super::Config = toml::from_str(&updated_false).expect("valid config");
+        assert!(!config.ui.hide_offline_hosts);
+        assert_eq!(config.ui.sidebar_width, 32);
     }
 }

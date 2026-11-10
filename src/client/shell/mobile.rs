@@ -585,6 +585,10 @@ fn mobile_items(
     if endpoints.len() > 1 {
         items.push(MobileItem::section("machines", palette));
         for endpoint in endpoints {
+            if !config.endpoint_visible(&endpoint.endpoint_id, endpoint.status, active_endpoint_id)
+            {
+                continue;
+            }
             let background = palette.panel_bg;
             let (symbol, state, color) = endpoint_status_presentation(endpoint.status, palette);
             items.push(MobileItem {
@@ -610,11 +614,18 @@ fn mobile_items(
             });
         }
     }
-    let agents = super::aggregate_navigation::aggregate_agent_rows(
+    let mut agents = super::aggregate_navigation::aggregate_agent_rows(
         endpoints,
         active_endpoint_id,
         config.agent_panel_sort,
     );
+    agents.retain(|row| {
+        config.endpoint_visible(
+            row.endpoint.endpoint_id,
+            row.endpoint.status,
+            active_endpoint_id,
+        )
+    });
     let agent_view_label = snapshot.agent_view_label.as_deref();
     if !agents.is_empty() || agent_view_label.is_some() {
         let title = agent_view_label
@@ -753,7 +764,11 @@ fn mobile_items(
         ClientMobileTarget::NewWorkspace,
         palette,
     ));
-    for endpoint in super::aggregate_navigation::cached_endpoint_snapshots(endpoints) {
+    for endpoint in
+        super::aggregate_navigation::cached_endpoint_snapshots(endpoints).filter(|endpoint| {
+            config.endpoint_visible(endpoint.endpoint_id, endpoint.status, active_endpoint_id)
+        })
+    {
         for entry in super::render::workspace_entries(endpoint.snapshot, &HashSet::new()) {
             let Some(workspace) = endpoint.snapshot.workspaces.get(entry.index) else {
                 continue;

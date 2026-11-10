@@ -842,6 +842,12 @@
           "description": "Toggle sidebar collapse."
         },
         {
+          "key": "keys.toggle_offline_hosts",
+          "type": "keybinding",
+          "default": "\"prefix+shift+b\"",
+          "description": "Toggle visibility of offline remote hosts and save the preference. Local and active hosts remain visible."
+        },
+        {
           "key": "keys.indexed.tabs",
           "type": "string",
           "default": "unset",
@@ -888,6 +894,12 @@
           "type": "boolean",
           "default": "false",
           "description": "Start Herdr with the sidebar collapsed. Changes take effect on the next launch."
+        },
+        {
+          "key": "ui.hide_offline_hosts",
+          "type": "boolean",
+          "default": "false",
+          "description": "Hide offline remote hosts and their agents and workspaces from desktop sidebars and the mobile switcher. Local and active hosts remain visible. Change this in settings or with keys.toggle_offline_hosts."
         },
         {
           "key": "ui.sidebar_collapsed_mode",

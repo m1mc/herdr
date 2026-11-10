@@ -562,9 +562,13 @@ impl ClientState {
             return false;
         }
         let frame_output::ComposedFrame {
-            frame: frame_data,
+            frame: mut frame_data,
             graphics,
         } = frame_data.into();
+        if self.shell.is_some() && self.shell_mouse_capture_preference {
+            // Keep link metadata in the shell; omit host destinations while Herdr owns clicks.
+            frame_data.hyperlinks.clear();
+        }
         let frame_data = if self.draw_host_cursor {
             render_ansi::frame_with_drawn_cursor(frame_data)
         } else {

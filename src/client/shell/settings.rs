@@ -51,6 +51,7 @@ impl ClientShellState {
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
             ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
+            ClientSettingsSection::OfflineHosts => usize::from(self.config.hide_offline_hosts),
             ClientSettingsSection::Integrations => 0,
         }
     }
@@ -97,7 +98,9 @@ impl ClientShellState {
         match self.overlay.as_ref() {
             Some(ClientShellOverlay::Settings(settings)) => match settings.section {
                 ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
-                ClientSettingsSection::Indicators | ClientSettingsSection::Sound => 2,
+                ClientSettingsSection::Indicators
+                | ClientSettingsSection::Sound
+                | ClientSettingsSection::OfflineHosts => 2,
                 ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
             },
@@ -159,7 +162,7 @@ impl ClientShellState {
         self.config.palette = settings.original_palette;
     }
 
-    fn save_settings_edit(
+    pub(super) fn save_settings_edit(
         &mut self,
         edit: crate::config::ConfigEdit<'_>,
         outcome: &mut ClientShellInput,
@@ -219,6 +222,12 @@ impl ClientShellState {
                 };
                 self.save_settings_edit(
                     crate::config::ConfigEdit::ToastDelivery(delivery),
+                    outcome,
+                );
+            }
+            ClientSettingsSection::OfflineHosts => {
+                self.save_settings_edit(
+                    crate::config::ConfigEdit::HideOfflineHosts(selected == 1),
                     outcome,
                 );
             }

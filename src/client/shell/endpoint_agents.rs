@@ -136,6 +136,9 @@ fn agent_rows(
 ) -> Vec<EndpointAgentRow> {
     let mut rendered_rows = endpoints
         .iter()
+        .filter(|endpoint| {
+            config.endpoint_visible(&endpoint.endpoint_id, endpoint.status, active_endpoint_id)
+        })
         .filter_map(|endpoint| {
             endpoint.snapshot.as_deref().map(|snapshot| {
                 snapshot

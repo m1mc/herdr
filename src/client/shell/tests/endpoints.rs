@@ -2839,3 +2839,147 @@ fn navigator_foreign_workspace_heading_keeps_the_workspace_target() {
         }] if activated == &endpoint_id && workspace_id == "ws_1"
     ));
 }
+
+#[test]
+fn hide_offline_hosts_filters_reconnecting_endpoints_and_shows_when_online() {
+    let (mut state, endpoint_id) = state_with_remote();
+
+    // Initially with hide_offline_hosts = false, online remote endpoint is visible.
+    state.compose(100, 30).expect("compose with remote online");
+    assert!(state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == endpoint_id));
+    assert!(state
+        .hits
+        .workspaces
+        .iter()
+        .any(|w| w.endpoint_id == endpoint_id));
+
+    // When disconnected / connecting, but hide_offline_hosts is false, still visible.
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Connecting);
+    state
+        .compose(100, 30)
+        .expect("compose with remote connecting");
+    assert!(state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == endpoint_id));
+    assert!(state
+        .hits
+        .workspaces
+        .iter()
+        .any(|w| w.endpoint_id == endpoint_id));
+
+    // When hide_offline_hosts is enabled, disconnected remote endpoint is hidden.
+    state.config.hide_offline_hosts = true;
+    state
+        .compose(100, 30)
+        .expect("compose with hide_offline_hosts enabled");
+    assert!(!state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == endpoint_id));
+    assert!(!state
+        .hits
+        .workspaces
+        .iter()
+        .any(|w| w.endpoint_id == endpoint_id));
+
+    // Once reconnected (Online), it immediately becomes visible again.
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
+    state
+        .compose(100, 30)
+        .expect("compose after remote reconnects");
+    assert!(state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == endpoint_id));
+    assert!(state
+        .hits
+        .workspaces
+        .iter()
+        .any(|w| w.endpoint_id == endpoint_id));
+
+    // Protected: active endpoint is never hidden even when reconnecting.
+    assert!(state.activate_endpoint_projection(&endpoint_id));
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Connecting);
+    state
+        .compose(100, 30)
+        .expect("compose when active remote is reconnecting");
+    assert!(state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == endpoint_id));
+    assert!(state
+        .hits
+        .workspaces
+        .iter()
+        .any(|w| w.endpoint_id == endpoint_id));
+
+    // Protected: local endpoint is never hidden even if disconnected.
+    assert!(state.activate_endpoint_projection(&ClientEndpointId::Local));
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Connecting);
+    state
+        .compose(100, 30)
+        .expect("compose with local connecting");
+    assert!(state
+        .hits
+        .machines
+        .iter()
+        .any(|m| m.endpoint_id == ClientEndpointId::Local));
+}
+
+#[test]
+fn hide_offline_hosts_filters_all_mobile_targets() {
+    let (mut state, endpoint_id) = state_with_remote();
+    state
+        .endpoints
+        .iter_mut()
+        .find(|endpoint| endpoint.endpoint_id == endpoint_id)
+        .expect("remote endpoint")
+        .snapshot
+        .as_mut()
+        .expect("remote snapshot")
+        .agents = vec![agent(
+        "remote agent",
+        crate::api::schema::AgentStatus::Working,
+        2,
+    )];
+    state.mode = ClientShellMode::Navigate;
+    state.config.hide_offline_hosts = true;
+
+    for (status, visible) in [
+        (ClientEndpointStatus::Online, true),
+        (ClientEndpointStatus::Connecting, false),
+        (ClientEndpointStatus::Reconnecting, false),
+        (ClientEndpointStatus::Attention, false),
+        (ClientEndpointStatus::Disabled, false),
+        (ClientEndpointStatus::Online, true),
+    ] {
+        state.set_endpoint_status(&endpoint_id, status);
+        state.compose(44, 100).expect("mobile switcher");
+        let mut targets = [false; 3];
+        for (_, target) in &state.hits.mobile_targets {
+            match target {
+                ClientMobileTarget::Machine(id) if id == &endpoint_id => targets[0] = true,
+                ClientMobileTarget::Agent {
+                    endpoint_id: id, ..
+                } if id == &endpoint_id => targets[1] = true,
+                ClientMobileTarget::Workspace {
+                    endpoint_id: id, ..
+                } if id == &endpoint_id => targets[2] = true,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            targets, [visible; 3],
+            "remote targets with status {status:?}"
+        );
+    }
+}

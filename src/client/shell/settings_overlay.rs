@@ -194,6 +194,18 @@ pub(super) fn render_settings_overlay(
                 &mut choice_hits,
             );
         }
+        ClientSettingsSection::OfflineHosts => {
+            render_choice_section(
+                buffer,
+                content,
+                "offline remote hosts",
+                "hide unreachable or reconnecting remote hosts in the sidebar",
+                &["show", "hide"],
+                settings.selected,
+                palette,
+                &mut choice_hits,
+            );
+        }
         ClientSettingsSection::Integrations => {
             render_integrations(buffer, content, settings, palette);
         }
