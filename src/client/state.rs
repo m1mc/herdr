@@ -562,14 +562,9 @@ impl ClientState {
             return false;
         }
         let frame_output::ComposedFrame {
-            frame: mut frame_data,
+            frame: frame_data,
             graphics,
         } = frame_data.into();
-        // With capture enabled, host OSC 8 can intercept Ctrl-click before plugins.
-        // Keep semantic links internally and restore native links when capture is off.
-        if self.shell_mouse_capture_preference {
-            frame_data.hyperlinks.clear();
-        }
         let frame_data = if self.draw_host_cursor {
             render_ansi::frame_with_drawn_cursor(frame_data)
         } else {
