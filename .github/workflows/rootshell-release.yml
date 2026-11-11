@@ -209,12 +209,12 @@ jobs:
 
             #### 2. macOS & Linux (Shell Installer)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/scripts/rootshell-install.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/m1mc/herdr/rootshell-universal/scripts/rootshell-install.sh | sh
             ```
 
             #### 3. Windows 11 (PowerShell Installer for x86_64 & ARM64)
             ```powershell
-            irm https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/distribution/install.ps1 | iex
+            irm https://raw.githubusercontent.com/m1mc/herdr/rootshell-universal/distribution/install.ps1 | iex
             ```
 
             #### 4. In-App Auto-Update (All platforms)

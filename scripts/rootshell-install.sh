@@ -6,7 +6,7 @@ trap 'rm -rf "$tmp"' EXIT
 repo=${HERDR_REPO:-m1mc/herdr}
 tag=${1:-}
 if [ -z "$tag" ]; then
-    curl -fL --retry 3 -o "$tmp/rootshell.json" "https://raw.githubusercontent.com/$repo/arm64-rootshell/distribution/rootshell.json"
+    curl -fL --retry 3 -o "$tmp/rootshell.json" "https://raw.githubusercontent.com/$repo/rootshell-universal/distribution/rootshell.json"
     version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"[,[:space:]]*$/\1/p' "$tmp/rootshell.json")
     base_ver=$(sed -n 's/^[[:space:]]*"base_version":[[:space:]]*"\([^"]*\)"[,[:space:]]*$/\1/p' "$tmp/rootshell.json")
     if [ -n "$base_ver" ]; then

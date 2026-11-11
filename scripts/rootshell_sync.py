@@ -40,7 +40,7 @@ def sync(upstream, repo, dry_run=False):
         raise ValueError('Existing upstream remote does not match the requested source')
 
     new_tags = remote_tags('upstream') - remote_tags('origin')
-    git('fetch', 'origin', 'master', 'arm64-rootshell', '--tags')
+    git('fetch', 'origin', 'master', 'rootshell-universal', '--tags')
     git('fetch', 'upstream', 'master', '--tags')
     print(f'Upstream tags absent from the fork: {len(new_tags)}', flush=True)
     if dry_run:
@@ -50,10 +50,10 @@ def sync(upstream, repo, dry_run=False):
     git('switch', '--detach', 'origin/master')
     git('merge', '--no-edit', 'upstream/master')
     git('push', 'origin', 'HEAD:refs/heads/master')
-    git('switch', 'arm64-rootshell')
-    git('merge', '--ff-only', 'origin/arm64-rootshell')
+    git('switch', 'rootshell-universal')
+    git('merge', '--ff-only', 'origin/rootshell-universal')
     git('merge', '--no-edit', 'upstream/master')
-    git('push', 'origin', 'HEAD:refs/heads/arm64-rootshell')
+    git('push', 'origin', 'HEAD:refs/heads/rootshell-universal')
     if not new_tags:
         print('Commits synchronized; no new upstream tags, so no release.', flush=True)
         return

@@ -34,9 +34,9 @@ class RootshellSyncTests(unittest.TestCase):
         (self.work / 'fork-only').write_text('preserve customizations\n')
         self.commit(self.work, 'fork customization')
         self.run_git(self.work, 'push', 'origin', 'master')
-        self.run_git(self.work, 'switch', '-c', 'arm64-rootshell')
+        self.run_git(self.work, 'switch', '-c', 'rootshell-universal')
         self.run_git(self.work, 'tag', 'v0.9.5-rootshell.0.1.13')
-        self.run_git(self.work, 'push', 'origin', 'arm64-rootshell', '--tags')
+        self.run_git(self.work, 'push', 'origin', 'rootshell-universal', '--tags')
         tools = self.root / 'bin'
         tools.mkdir()
         gh = tools / 'gh'
@@ -77,7 +77,7 @@ exit "${DISPATCH_EXIT:-0}"
     def test_commit_only_sync_preserves_customizations_without_release(self):
         self.update_upstream()
         self.sync()
-        for branch in ('master', 'arm64-rootshell'):
+        for branch in ('master', 'rootshell-universal'):
             self.assertEqual(self.run_git(self.root, '--git-dir', str(self.origin),
                                          'show', f'{branch}:fork-only'), 'preserve customizations')
             self.assertEqual(self.run_git(self.root, '--git-dir', str(self.origin),
@@ -108,7 +108,7 @@ exit "${DISPATCH_EXIT:-0}"
     def test_merge_conflict_stops_before_importing_tags_or_dispatching(self):
         (self.work / 'Cargo.toml').write_text('[package]\nversion = "0.9.7"\n')
         self.commit(self.work, 'local version change')
-        self.run_git(self.work, 'push', 'origin', 'arm64-rootshell')
+        self.run_git(self.work, 'push', 'origin', 'rootshell-universal')
         (self.source / 'Cargo.toml').write_text('[package]\nversion = "0.9.6"\n')
         self.commit(self.source, 'upstream version change')
         self.run_git(self.source, 'tag', 'v0.9.6')
