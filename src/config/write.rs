@@ -2,7 +2,11 @@
 pub(crate) enum ConfigEdit<'a> {
     Theme(&'a str),
     StatusIndicators(super::StatusIndicatorStyle),
+    #[allow(dead_code)]
     Sound(bool),
+    #[allow(dead_code)]
+    VisualBell(bool),
+    Alerts { sound: bool, visual_bell: bool },
     ToastDelivery(super::ToastDelivery),
     HideOfflineHosts(bool),
 }
@@ -13,6 +17,8 @@ impl ConfigEdit<'_> {
             Self::Theme(_) => "theme",
             Self::StatusIndicators(_) => "status indicators",
             Self::Sound(_) => "sound setting",
+            Self::VisualBell(_) => "visual bell setting",
+            Self::Alerts { .. } => "alert settings",
             Self::ToastDelivery(_) => "toast setting",
             Self::HideOfflineHosts(_) => "hide offline hosts setting",
         }
@@ -34,12 +40,20 @@ impl ConfigEdit<'_> {
             Self::Sound(enabled) => {
                 super::upsert_section_bool(content, "ui.sound", "enabled", enabled)
             }
+            Self::VisualBell(enabled) => {
+                super::upsert_section_bool(content, "ui.bell", "visual_bell", enabled)
+            }
+            Self::Alerts { sound, visual_bell } => {
+                let content = super::upsert_section_bool(content, "ui.sound", "enabled", sound);
+                super::upsert_section_bool(&content, "ui.bell", "visual_bell", visual_bell)
+            }
             Self::ToastDelivery(delivery) => {
                 let value = match delivery {
                     super::ToastDelivery::Off => "\"off\"",
                     super::ToastDelivery::Herdr => "\"herdr\"",
                     super::ToastDelivery::Terminal => "\"terminal\"",
                     super::ToastDelivery::System => "\"system\"",
+                    super::ToastDelivery::All => "\"all\"",
                 };
                 let content = super::upsert_section_value(content, "ui.toast", "delivery", value);
                 super::remove_section_key(&content, "ui.toast", "enabled")
@@ -123,5 +137,35 @@ mod tests {
         let config: super::super::Config = toml::from_str(&updated_false).expect("valid config");
         assert!(!config.ui.hide_offline_hosts);
         assert_eq!(config.ui.sidebar_width, 32);
+    }
+
+    #[test]
+    fn config_edit_visual_bell_applies() {
+        let initial = "[ui]\nsidebar_width = 32\n";
+        let updated = ConfigEdit::VisualBell(true).apply(initial);
+        let config: super::super::Config = toml::from_str(&updated).expect("valid config");
+        assert!(config.ui.bell.visual_bell);
+        assert!(config.ui.visual_bell_enabled());
+
+        let updated_false = ConfigEdit::VisualBell(false).apply(&updated);
+        let config: super::super::Config = toml::from_str(&updated_false).expect("valid config");
+        assert!(!config.ui.bell.visual_bell);
+        assert!(!config.ui.visual_bell_enabled());
+    }
+
+    #[test]
+    fn config_edit_alerts_applies() {
+        let initial = "[ui]\nsidebar_width = 32\n";
+        let updated = ConfigEdit::Alerts { sound: false, visual_bell: true }.apply(initial);
+        let config: super::super::Config = toml::from_str(&updated).expect("valid config");
+        assert!(!config.ui.sound.enabled);
+        assert!(config.ui.bell.visual_bell);
+        assert!(config.ui.visual_bell_enabled());
+
+        let updated_sound = ConfigEdit::Alerts { sound: true, visual_bell: false }.apply(&updated);
+        let config: super::super::Config = toml::from_str(&updated_sound).expect("valid config");
+        assert!(config.ui.sound.enabled);
+        assert!(!config.ui.bell.visual_bell);
+        assert!(!config.ui.visual_bell_enabled());
     }
 }

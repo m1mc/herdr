@@ -13,7 +13,7 @@ pub(crate) fn should_forward_toast_to_clients(delivery: config::ToastDelivery) -
 pub(crate) fn toast_notify_kind(delivery: config::ToastDelivery) -> Option<protocol::NotifyKind> {
     match delivery {
         config::ToastDelivery::Terminal => Some(protocol::NotifyKind::Toast),
-        config::ToastDelivery::System => Some(protocol::NotifyKind::SystemToast),
+        config::ToastDelivery::System | config::ToastDelivery::All => Some(protocol::NotifyKind::SystemToast),
         config::ToastDelivery::Off | config::ToastDelivery::Herdr => None,
     }
 }

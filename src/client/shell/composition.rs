@@ -144,7 +144,20 @@ impl ClientShellState {
                 &self.config.palette,
             );
         }
-        FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[])
+        let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
+        self.apply_visual_bell_to_frame(&mut frame);
+        frame
+    }
+
+    fn apply_visual_bell_to_frame(&self, frame: &mut FrameData) {
+        if self
+            .visual_bell_until
+            .is_some_and(|until| std::time::Instant::now() < until)
+        {
+            for cell in &mut frame.cells {
+                cell.modifier ^= 1 << 6;
+            }
+        }
     }
 
     pub(crate) fn compose(
@@ -720,6 +733,7 @@ impl ClientShellState {
             self.hits.pane_splits.clear();
             self.hits.popup = None;
         }
+        self.apply_visual_bell_to_frame(&mut frame);
         let graphics = self.compose_graphics(layout, &occlusion);
         Some(crate::client::frame_output::ComposedFrame { frame, graphics })
     }

@@ -138,6 +138,7 @@ impl ClientShellConfig {
             agent_panel_sort: config.ui.agent_panel_sort,
             status_indicators: config.ui.status_indicators,
             sound_enabled: config.ui.sound.enabled,
+            visual_bell_enabled: config.ui.visual_bell_enabled(),
             hide_offline_hosts: config.ui.hide_offline_hosts,
             toast_delivery: config.ui.toast.delivery,
             toast_delay_seconds: config.ui.toast.delay_seconds,
@@ -366,6 +367,7 @@ impl ClientShellConfig {
                 self.agent_panel_sort = ui.agent_panel_sort;
                 self.status_indicators = ui.status_indicators;
                 self.sound_enabled = ui.sound.enabled;
+                self.visual_bell_enabled = ui.visual_bell_enabled();
                 self.hide_offline_hosts = ui.hide_offline_hosts;
                 self.toast_delivery = ui.toast.delivery;
                 self.toast_delay_seconds = ui.toast.delay_seconds;

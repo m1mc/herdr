@@ -66,6 +66,7 @@ pub enum ToastDelivery {
     Herdr,
     Terminal,
     System,
+    All,
 }
 
 #[derive(
@@ -1013,8 +1014,19 @@ pub struct UiConfig {
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
+    /// Visual bell (screen flash via ASCII \x07 BEL) on notifications.
+    #[serde(default)]
+    pub bell: BellConfig,
     /// Hide unreachable or reconnecting remote hosts in the sidebar. Default: false.
     pub hide_offline_hosts: bool,
+}
+
+/// Bell and alert visual presentation options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct BellConfig {
+    #[serde(alias = "visual")]
+    pub visual_bell: bool,
 }
 
 /// Cursor shape (DECSCUSR) used for the forced IME anchor.
@@ -1238,12 +1250,17 @@ impl Default for UiConfig {
             accent: "cyan".into(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
+            bell: BellConfig::default(),
             hide_offline_hosts: false,
         }
     }
 }
 
 impl UiConfig {
+    pub fn visual_bell_enabled(&self) -> bool {
+        self.bell.visual_bell || self.sound.visual_bell.unwrap_or(false)
+    }
+
     pub fn mouse_scroll_lines(&self) -> usize {
         self.mouse_scroll_lines
             .map(NonZeroUsize::get)
@@ -1927,6 +1944,16 @@ delivery = "system"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.toast.delivery, ToastDelivery::System);
+    }
+
+    #[test]
+    fn toast_config_parses_all_delivery() {
+        let toml = r#"
+[ui.toast]
+delivery = "all"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.toast.delivery, ToastDelivery::All);
     }
 
     #[test]

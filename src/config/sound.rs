@@ -10,6 +10,8 @@ use super::io::resolve_config_relative_path;
 #[serde(default)]
 pub struct SoundConfig {
     pub enabled: bool,
+    #[serde(default)]
+    pub visual_bell: Option<bool>,
     /// Optional mp3 file path used for all notification sounds.
     /// Relative paths are resolved from the config file's directory.
     pub path: Option<PathBuf>,
@@ -155,6 +157,7 @@ impl Default for SoundConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            visual_bell: None,
             path: None,
             done_path: None,
             request_path: None,
@@ -291,5 +294,51 @@ path = "sounds/notification.wav"
         assert!(diagnostics.iter().any(|diag| {
             diag.contains("ui.sound.path") && diag.contains("expected an mp3 file")
         }));
+    }
+
+    #[test]
+    fn bell_table_config_parses_visual_bell() {
+        let config: Config = toml::from_str(
+            r#"
+[ui.bell]
+visual_bell = true
+"#,
+        )
+        .unwrap();
+        assert!(config.ui.bell.visual_bell);
+        assert!(config.ui.visual_bell_enabled());
+    }
+
+    #[test]
+    fn sound_table_config_parses_visual_bell() {
+        let config: Config = toml::from_str(
+            r#"
+[ui.sound]
+visual_bell = true
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.ui.sound.visual_bell, Some(true));
+        assert!(config.ui.visual_bell_enabled());
+    }
+
+    #[test]
+    fn bell_table_config_parses_visual_alias() {
+        let config: Config = toml::from_str(
+            r#"
+[ui.bell]
+visual = true
+"#,
+        )
+        .unwrap();
+        assert!(config.ui.bell.visual_bell);
+        assert!(config.ui.visual_bell_enabled());
+    }
+
+    #[test]
+    fn visual_bell_defaults_to_false() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(!config.ui.bell.visual_bell);
+        assert!(!config.ui.visual_bell_enabled());
     }
 }

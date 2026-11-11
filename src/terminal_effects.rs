@@ -12,6 +12,11 @@ pub(crate) fn write_terminal_bells<W: Write>(writer: &mut W, count: u16) -> io::
     writer.flush()
 }
 
+pub(crate) fn write_visual_bell<W: Write>(writer: &mut W) -> io::Result<()> {
+    writer.write_all(b"\x1b[?5h\x07\x1b[?5l")?;
+    writer.flush()
+}
+
 pub(crate) fn write_window_title<W: Write>(writer: &mut W, title: Option<&str>) -> io::Result<()> {
     let title = title.unwrap_or("herdr");
     let safe_title = title
@@ -33,6 +38,13 @@ mod tests {
         write_terminal_bells(&mut output, 130).unwrap();
 
         assert_eq!(output, vec![b'\x07'; 130]);
+    }
+
+    #[test]
+    fn visual_bell_emits_dec_reverse_video_and_bel() {
+        let mut output = Vec::new();
+        write_visual_bell(&mut output).unwrap();
+        assert_eq!(output, b"\x1b[?5h\x07\x1b[?5l");
     }
 
     #[test]
