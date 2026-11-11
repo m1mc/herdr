@@ -553,7 +553,11 @@ fn enable_windows_virtual_terminal_input_inner() -> WindowsVirtualTerminalInputS
 }
 
 pub(super) fn is_ssh_session() -> bool {
-    std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some()
+    std::env::var_os("SSH_CONNECTION").is_some()
+        || std::env::var_os("SSH_TTY").is_some()
+        || std::env::var_os("SSH_CLIENT").is_some()
+        || std::env::var_os("LC_TERMINAL").is_some_and(|v| v == "rootshell")
+        || std::env::var_os("LC_ROOTSHELL_PANE").is_some()
 }
 
 #[cfg(any(windows, test))]

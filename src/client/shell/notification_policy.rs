@@ -205,48 +205,69 @@ impl ClientShellState {
                         },
                         agent: pending.event.agent.clone(),
                     });
+                    if self.config.visual_bell_enabled {
+                        effects.push(ClientShellNotificationEffect::VisualBell);
+                        self.trigger_visual_bell(now);
+                        repaint = true;
+                    }
                 }
+            } else if self.config.visual_bell_enabled && !suppress_external {
+                effects.push(ClientShellNotificationEffect::VisualBell);
+                self.trigger_visual_bell(now);
+                repaint = true;
             }
 
-            match self.config.toast_delivery {
-                crate::config::ToastDelivery::Off => {}
-                crate::config::ToastDelivery::Herdr if !target_active => {
-                    self.queue_visible_notification(
-                        ClientVisibleNotification {
-                            endpoint_id: pending.endpoint_id,
-                            event: pending.event,
-                            deadline: now,
-                        },
-                        now,
-                    );
-                    repaint = true;
-                }
-                crate::config::ToastDelivery::Herdr => {}
-                crate::config::ToastDelivery::Terminal if !suppress_external => {
-                    effects.push(ClientShellNotificationEffect::Terminal {
-                        title: pending.event.title,
-                        body: pending.event.body,
-                    });
-                }
-                crate::config::ToastDelivery::System if !suppress_external => {
+            let show_herdr = matches!(
+                self.config.toast_delivery,
+                crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
+            ) && (!target_active || pending.event.kind == SemanticNotificationKind::Custom);
+
+            if show_herdr {
+                self.queue_visible_notification(
+                    ClientVisibleNotification {
+                        endpoint_id: pending.endpoint_id.clone(),
+                        event: pending.event.clone(),
+                        deadline: now,
+                    },
+                    now,
+                );
+                repaint = true;
+            }
+
+            let show_terminal = matches!(
+                self.config.toast_delivery,
+                crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::All
+            ) && !suppress_external;
+
+            if show_terminal {
+                effects.push(ClientShellNotificationEffect::Terminal {
+                    title: pending.event.title.clone(),
+                    body: pending.event.body.clone(),
+                });
+            }
+
+            let show_system = matches!(
+                self.config.toast_delivery,
+                crate::config::ToastDelivery::System | crate::config::ToastDelivery::All
+            ) && !suppress_external;
+
+            if show_system {
+                #[cfg(windows)]
+                let target = pending.event.pane_id.as_ref().and_then(|pane_id| {
+                    self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
+                        ClientSystemNotificationTarget {
+                            endpoint_id: pending.endpoint_id.clone(),
+                            boot_id: boot_id.to_owned(),
+                            pane_id: pane_id.clone(),
+                        }
+                    })
+                });
+                effects.push(ClientShellNotificationEffect::System {
+                    title: pending.event.title,
+                    body: pending.event.body,
                     #[cfg(windows)]
-                    let target = pending.event.pane_id.as_ref().and_then(|pane_id| {
-                        self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
-                            ClientSystemNotificationTarget {
-                                endpoint_id: pending.endpoint_id.clone(),
-                                boot_id: boot_id.to_owned(),
-                                pane_id: pane_id.clone(),
-                            }
-                        })
-                    });
-                    effects.push(ClientShellNotificationEffect::System {
-                        title: pending.event.title,
-                        body: pending.event.body,
-                        #[cfg(windows)]
-                        target,
-                    });
-                }
-                crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::System => {}
+                    target,
+                });
             }
         }
         (effects, repaint)

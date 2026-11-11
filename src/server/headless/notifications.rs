@@ -93,11 +93,18 @@ impl HeadlessServer {
         let agent = known_agent
             .map(crate::detect::agent_label)
             .map(str::to_owned);
-        self.send_to_client_shells(ServerMessage::SemanticNotification(
+        let title = format!("{agent_label} {event_text}");
+        let body = non_empty_body(&context);
+        let status = match kind {
+            crate::app::state::ToastKind::Finished => "done",
+            crate::app::state::ToastKind::NeedsAttention => "blocked",
+            crate::app::state::ToastKind::UpdateInstalled => "info",
+        };
+        let notification_msg = ServerMessage::SemanticNotification(
             protocol::SemanticNotification {
                 kind: semantic_kind,
-                title: format!("{agent_label} {event_text}"),
-                body: non_empty_body(&context),
+                title: title.clone(),
+                body: body.clone(),
                 sound,
                 agent,
                 workspace_id: Some(workspace_id),
@@ -105,7 +112,58 @@ impl HeadlessServer {
                 pane_id: Some(public_pane_id),
                 position: None,
             },
-        ))
+        );
+
+        let sent = self.dispatch_agent_semantic_notification(pane_id, notification_msg);
+        if !sent {
+            crate::rootshell_notify::send_push_notification(&title, body.as_deref(), status);
+        }
+        sent
+    }
+
+    /// Dispatches a semantic notification to the targeted client.
+    ///
+    /// Prioritizes the client that originated input to this pane. If that client is online,
+    /// notification side effects (sound, toast, visual bell) are routed exclusively to it,
+    /// avoiding redundant alerts on other devices.
+    /// If that client is offline or wasn't tracked, falls back to the current active foreground
+    /// shell client, or any connected shell client. Returns false if no client was reached.
+    pub(super) fn dispatch_agent_semantic_notification(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        msg: ServerMessage,
+    ) -> bool {
+        // 1. If the originating input client is still online, route only to that client.
+        if let Some(&origin_client_id) = self.pane_last_input_clients.get(&pane_id) {
+            if let Some(client) = self.clients.get(&origin_client_id) {
+                if client.is_active_shell_client() {
+                    return self.send_to_client(origin_client_id, msg);
+                }
+            }
+        }
+
+        // 2. If the originating client is offline or unknown, check if foreground client is active.
+        if let Some(foreground_id) = self.foreground_client_id {
+            if let Some(client) = self.clients.get(&foreground_id) {
+                if client.is_active_shell_client() {
+                    return self.send_to_client(foreground_id, msg);
+                }
+            }
+        }
+
+        // 3. If only one shell client is connected in total, route to it.
+        let shell_clients: Vec<u64> = self
+            .clients
+            .iter()
+            .filter_map(|(&id, c)| c.is_active_shell_client().then_some(id))
+            .collect();
+        if shell_clients.len() == 1 {
+            if let Some(&only_client) = shell_clients.first() {
+                return self.send_to_client(only_client, msg);
+            }
+        }
+
+        false
     }
 
     fn forward_pane_state_update_notifications_to_clients(
@@ -262,21 +320,49 @@ impl HeadlessServer {
                 Some(protocol::SemanticNotificationSound::Request)
             }
         };
-        let shown = self.send_to_client_shells(ServerMessage::SemanticNotification(
+        let notification_msg = ServerMessage::SemanticNotification(
             protocol::SemanticNotification {
                 kind: protocol::SemanticNotificationKind::Custom,
-                title,
-                body,
+                title: title.clone(),
+                body: body.clone(),
                 sound,
                 agent: None,
                 workspace_id: None,
                 tab_id: None,
-                pane_id: None,
+                pane_id: params.pane_id.clone(),
                 position: params.position,
             },
-        ));
+        );
+        let target_client_id = self.foreground_client_id.or_else(|| {
+            let shell_clients: Vec<u64> = self
+                .clients
+                .iter()
+                .filter_map(|(&id, c)| c.is_active_shell_client().then_some(id))
+                .collect();
+            if shell_clients.len() == 1 {
+                shell_clients.first().copied()
+            } else {
+                None
+            }
+        });
+
+        let shown = if let Some(pane_id_str) = &params.pane_id {
+            if let Some((_ws_idx, pane_id)) = self.app.parse_current_public_pane_id(pane_id_str) {
+                self.dispatch_agent_semantic_notification(pane_id, notification_msg)
+            } else if let Some(client_id) = target_client_id {
+                self.send_to_client(client_id, notification_msg)
+            } else {
+                false
+            }
+        } else if let Some(client_id) = target_client_id {
+            self.send_to_client(client_id, notification_msg)
+        } else {
+            false
+        };
         if shown {
             self.app.mark_api_notification_shown(Instant::now());
+        } else {
+            crate::rootshell_notify::send_push_notification(&title, body.as_deref(), "info");
         }
         notification_show_result(
             id,
@@ -638,6 +724,7 @@ impl HeadlessServer {
                 self.reapply_controlled_shell_tab_geometry(false);
                 for (pane_id, terminal_id) in shutdown_terminals {
                     if self.app.find_pane(pane_id).is_none() {
+                        self.pane_last_input_clients.remove(&pane_id);
                         self.shutdown_terminal_stream_clients(
                             &terminal_id,
                             format!("terminal {terminal_id} exited"),
@@ -685,6 +772,7 @@ impl HeadlessServer {
                 self.reapply_controlled_shell_tab_geometry(false);
 
                 if self.app.find_pane(pane_id_val).is_none() {
+                    self.pane_last_input_clients.remove(&pane_id_val);
                     if let Some(terminal_id) = terminal_id {
                         self.shutdown_terminal_stream_clients(
                             &terminal_id,

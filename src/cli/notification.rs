@@ -98,11 +98,13 @@ fn parse_notification_show_args(
         }
     }
 
+    let pane_id = std::env::var("HERDR_PANE_ID").ok();
     Ok(NotificationShowParams {
         title,
         body,
         position,
         sound,
+        pane_id,
     })
 }
 
@@ -166,6 +168,7 @@ mod tests {
                 body: Some("api workspace".into()),
                 position: Some(ToastHerdrPosition::TopRight),
                 sound: NotificationShowSound::Request,
+                pane_id: std::env::var("HERDR_PANE_ID").ok(),
             }
         );
     }

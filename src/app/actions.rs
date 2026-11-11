@@ -1406,7 +1406,7 @@ impl AppState {
                 self.update_dismissed = true;
                 if matches!(
                     self.toast_config.delivery,
-                    crate::config::ToastDelivery::Herdr
+                    crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
                 ) {
                     self.toast = Some(ToastNotification {
                         kind: ToastKind::UpdateInstalled,
@@ -1426,7 +1426,7 @@ impl AppState {
                 if !updated.is_empty()
                     && matches!(
                         self.toast_config.delivery,
-                        crate::config::ToastDelivery::Herdr
+                        crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
                     )
                 {
                     let agent_list = updated
@@ -2003,7 +2003,7 @@ impl AppState {
     fn apply_agent_notification_delivery(&mut self, delivery: &AgentNotificationDelivery) {
         if matches!(
             self.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr
+            crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
         ) {
             if let Some(toast) = delivery.toast.clone() {
                 self.toast = Some(toast);

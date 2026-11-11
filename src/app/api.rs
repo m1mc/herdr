@@ -444,7 +444,7 @@ impl App {
     ) {
         if !matches!(
             self.state.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr
+            crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
         ) || self.state.toast == *previous_toast
         {
             return;
@@ -1306,7 +1306,7 @@ impl App {
 
         let reason = match self.state.toast_config.delivery {
             crate::config::ToastDelivery::Off => NotificationShowReason::Disabled,
-            crate::config::ToastDelivery::Herdr => {
+            crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All => {
                 if self.state.toast.is_some() {
                     NotificationShowReason::Busy
                 } else if self.api_notification_rate_limited(Instant::now()) {

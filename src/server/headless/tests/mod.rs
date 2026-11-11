@@ -115,6 +115,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         native_graphics: Default::default(),
         interactive_input_deadlines: HashMap::new(),
         interactive_render_budget: None,
+        pane_last_input_clients: HashMap::new(),
         #[cfg(unix)]
         next_client_id: 1,
         foreground_client_id: None,
@@ -7272,6 +7273,7 @@ fn notification_show_uses_client_shell_policy_independent_of_server_delivery() {
             body: Some("plugin body".into()),
             position: Some(crate::config::ToastHerdrPosition::TopLeft),
             sound: api::schema::NotificationShowSound::Done,
+            pane_id: None,
         },
     );
     let response: api::schema::SuccessResponse = serde_json::from_str(&response).unwrap();
@@ -7555,6 +7557,7 @@ fn notification_show_api_forwards_one_semantic_client_notification() {
                 body: Some("api workspace".into()),
                 position: Some(crate::config::ToastHerdrPosition::TopLeft),
                 sound: api::schema::NotificationShowSound::Request,
+                pane_id: None,
             }),
         },
         respond_to,
@@ -7618,6 +7621,7 @@ fn notification_show_api_preserves_colon_in_forwarded_title() {
                 body: Some("api workspace".into()),
                 position: None,
                 sound: api::schema::NotificationShowSound::None,
+                pane_id: None,
             }),
         },
         respond_to,
@@ -7664,6 +7668,7 @@ fn notification_show_api_validates_empty_title_before_disabled_delivery() {
                 body: None,
                 position: None,
                 sound: api::schema::NotificationShowSound::None,
+                pane_id: None,
             }),
         },
         respond_to,
@@ -7695,6 +7700,7 @@ fn notification_show_api_reports_no_foreground_client() {
                 body: None,
                 position: None,
                 sound: api::schema::NotificationShowSound::Request,
+                pane_id: None,
             }),
         },
         respond_to,
@@ -7745,6 +7751,7 @@ fn notification_show_api_includes_sound_in_semantic_event() {
                         body: None,
                         position: None,
                         sound: api::schema::NotificationShowSound::Done,
+                        pane_id: None,
                     },
                 ),
             },
@@ -8358,4 +8365,115 @@ fn no_handle_internal_event_bypass_in_module() {
              handle_internal_event_with_forwarding (bypass risk):\n  {}",
         bypass_lines.join("\n  ")
     );
+}
+
+#[test]
+fn agent_semantic_notification_targets_originating_input_client_only() {
+    let mut server = test_headless_server();
+    let (client1_tx, client1_control_rx, _client1_rx) = test_client_writer();
+    let (client2_tx, client2_control_rx, _client2_rx) = test_client_writer();
+
+    server.clients.insert(
+        1,
+        ClientConnection::new(
+            (120, 40),
+            crate::kitty_graphics::HostCellSize::default(),
+            1,
+            RenderEncoding::SemanticFrame,
+            Some(client1_tx),
+        ),
+    );
+    server.clients.insert(
+        2,
+        ClientConnection::new(
+            (80, 24),
+            crate::kitty_graphics::HostCellSize::default(),
+            2,
+            RenderEncoding::SemanticFrame,
+            Some(client2_tx),
+        ),
+    );
+    server.foreground_client_id = Some(2);
+
+    let pane_id = crate::layout::PaneId::from_raw(42);
+    server.pane_last_input_clients.insert(pane_id, 1);
+
+    let msg = ServerMessage::SemanticNotification(crate::protocol::SemanticNotification {
+        kind: crate::protocol::SemanticNotificationKind::Finished,
+        title: "codex finished".into(),
+        body: Some("completed task".into()),
+        sound: Some(crate::protocol::SemanticNotificationSound::Done),
+        agent: Some("codex".into()),
+        workspace_id: None,
+        tab_id: None,
+        pane_id: None,
+        position: None,
+    });
+
+    let sent = server.dispatch_agent_semantic_notification(pane_id, msg);
+    assert!(sent);
+
+    let received = client1_control_rx
+        .recv_timeout(Duration::from_millis(100))
+        .expect("client 1 notification");
+    match read_server_message(received) {
+        ServerMessage::SemanticNotification(notif) => {
+            assert_eq!(notif.title, "codex finished");
+        }
+        other => panic!("expected semantic notification, got {other:?}"),
+    }
+
+    assert!(
+        client2_control_rx
+            .recv_timeout(Duration::from_millis(50))
+            .is_err(),
+        "client 2 should not receive client 1's notification"
+    );
+
+    // Disconnect client 1
+    server.clients.remove(&1);
+
+    let msg2 = ServerMessage::SemanticNotification(crate::protocol::SemanticNotification {
+        kind: crate::protocol::SemanticNotificationKind::Finished,
+        title: "codex finished 2".into(),
+        body: Some("completed task 2".into()),
+        sound: Some(crate::protocol::SemanticNotificationSound::Done),
+        agent: Some("codex".into()),
+        workspace_id: None,
+        tab_id: None,
+        pane_id: None,
+        position: None,
+    });
+
+    let sent2 = server.dispatch_agent_semantic_notification(pane_id, msg2);
+    assert!(sent2);
+
+    let received2 = client2_control_rx
+        .recv_timeout(Duration::from_millis(100))
+        .expect("client 2 fallback notification");
+    match read_server_message(received2) {
+        ServerMessage::SemanticNotification(notif) => {
+            assert_eq!(notif.title, "codex finished 2");
+        }
+        other => panic!("expected semantic notification on fallback, got {other:?}"),
+    }
+
+    // Disconnect client 2 as well
+    server.clients.remove(&2);
+    server.foreground_client_id = None;
+
+    let msg3 = ServerMessage::SemanticNotification(crate::protocol::SemanticNotification {
+        kind: crate::protocol::SemanticNotificationKind::Finished,
+        title: "codex finished 3".into(),
+        body: None,
+        sound: None,
+        agent: None,
+        workspace_id: None,
+        tab_id: None,
+        pane_id: None,
+        position: None,
+    });
+
+    let sent3 = server.dispatch_agent_semantic_notification(pane_id, msg3);
+    assert!(!sent3);
 }

@@ -206,6 +206,7 @@ pub struct HeadlessServer {
     native_graphics: native_graphics::NativeGraphics,
     interactive_input_deadlines: HashMap<crate::layout::PaneId, Instant>,
     interactive_render_budget: Option<(Instant, u8)>,
+    pub(super) pane_last_input_clients: HashMap<crate::layout::PaneId, u64>,
     #[cfg(unix)]
     next_client_id: u64,
     /// The client currently driving session-wide host presentation and side effects.
@@ -367,6 +368,7 @@ impl HeadlessServer {
             native_graphics: Default::default(),
             interactive_input_deadlines: HashMap::new(),
             interactive_render_budget: None,
+            pane_last_input_clients: HashMap::new(),
             #[cfg(unix)]
             next_client_id: 1,
             foreground_client_id: None,
@@ -2449,6 +2451,9 @@ impl HeadlessServer {
                 if let Some(client) = self.clients.get_mut(&client_id) {
                     client
                         .track_shell_input(ClientShellInputTarget::Pane(pane_id.clone()), &events);
+                }
+                if interaction {
+                    self.pane_last_input_clients.insert(runtime_pane_id, client_id);
                 }
                 let foreground_changed =
                     interaction && self.promote_client_to_foreground(client_id);

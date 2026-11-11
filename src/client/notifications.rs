@@ -54,12 +54,66 @@ pub(super) fn handle_shell_notification_effects(
     sound_config: &crate::config::SoundConfig,
     #[cfg(windows)] event_tx: &tokio::sync::mpsc::Sender<super::events::ClientLoopEvent>,
 ) {
+    let is_ssh = crate::client::terminal_setup::is_ssh_session()
+        || crate::client::handshake::is_remote_client_process();
+
+    if is_ssh {
+        let mut system_info: Option<(String, Option<String>)> = None;
+        let mut sound_status: Option<&'static str> = None;
+
+        for effect in &effects {
+            match effect {
+                shell::ClientShellNotificationEffect::Sound { sound, agent } => {
+                    let agent = agent.as_deref().and_then(crate::detect::parse_agent_label);
+                    if sound_config.allows(agent) {
+                        sound_status = Some(match sound {
+                            crate::sound::Sound::Done => "done",
+                            crate::sound::Sound::Request => "blocked",
+                        });
+                    }
+                }
+                shell::ClientShellNotificationEffect::System { title, body, .. } => {
+                    system_info = Some((title.clone(), body.clone()));
+                }
+                shell::ClientShellNotificationEffect::VisualBell => {
+                    if let Err(err) = crate::terminal_effects::write_visual_bell(&mut io::stdout()) {
+                        warn!(err = %err, "failed to emit visual bell");
+                    }
+                }
+                shell::ClientShellNotificationEffect::Terminal { title, body } => {
+                    if let Err(err) = crate::terminal_notify::show_notification(title, body.as_deref()) {
+                        warn!(err = %err, "failed to emit terminal notification");
+                    }
+                }
+            }
+        }
+
+        if let Some((title, body)) = system_info {
+            let status = sound_status.unwrap_or("info");
+            crate::rootshell_notify::send_push_notification(&title, body.as_deref(), status);
+        } else if let Some(status) = sound_status {
+            crate::rootshell_notify::send_push_notification("Herdr", None, status);
+        }
+
+        if sound_status.is_some() {
+            let _ = crate::terminal_effects::write_terminal_bells(&mut io::stdout(), 1);
+        }
+        return;
+    }
+
     for effect in effects {
         match effect {
             shell::ClientShellNotificationEffect::Sound { sound, agent } => {
                 let agent = agent.as_deref().and_then(crate::detect::parse_agent_label);
                 if sound_config.allows(agent) {
                     crate::sound::play(sound, sound_config);
+                }
+            }
+            shell::ClientShellNotificationEffect::VisualBell => {
+                if let Err(err) =
+                    crate::terminal_effects::write_visual_bell(&mut io::stdout())
+                {
+                    warn!(err = %err, "failed to emit visual bell");
                 }
             }
             shell::ClientShellNotificationEffect::Terminal { title, body } => {
@@ -161,7 +215,16 @@ pub(super) fn handle_notify_with_notifiers(
                 return;
             };
             if sound_config.enabled {
-                crate::sound::play(sound, sound_config);
+                if crate::client::terminal_setup::is_ssh_session()
+                    || crate::client::handshake::is_remote_client_process()
+                {
+                    let _ = crate::terminal_effects::write_terminal_bells(&mut io::stdout(), 1);
+                } else {
+                    crate::sound::play(sound, sound_config);
+                }
+            }
+            if sound_config.visual_bell.unwrap_or(false) {
+                let _ = crate::terminal_effects::write_visual_bell(&mut io::stdout());
             }
         }
         NotifyKind::Toast => {
