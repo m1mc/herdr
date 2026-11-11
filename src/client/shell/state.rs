@@ -26,6 +26,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
     pub(super) sound_enabled: bool,
+    pub(super) visual_bell_enabled: bool,
     pub(super) hide_offline_hosts: bool,
     pub(super) toast_delivery: crate::config::ToastDelivery,
     pub(super) toast_delay_seconds: u64,
@@ -408,7 +409,7 @@ impl ClientSettingsSection {
             Self::Indicators => "indicators",
             Self::Sound => "sound",
             Self::Toast => "toasts",
-            Self::OfflineHosts => "offline hosts",
+            Self::OfflineHosts => "offline host",
             Self::Integrations => "integrations",
         }
     }
@@ -719,6 +720,7 @@ pub(crate) enum ClientShellNotificationEffect {
         sound: crate::sound::Sound,
         agent: Option<String>,
     },
+    VisualBell,
     Terminal {
         title: String,
         body: Option<String>,
@@ -963,6 +965,7 @@ pub(crate) struct ClientShellState {
     pub(super) endpoint_error: Option<String>,
     pub(super) endpoint_error_deadline: Option<std::time::Instant>,
     pub(super) dismissed_product_announcement: Option<(String, String)>,
+    pub(super) visual_bell_until: Option<std::time::Instant>,
 }
 
 pub(super) fn product_announcement_state(
@@ -1131,6 +1134,7 @@ impl ClientShellState {
             endpoint_error: None,
             endpoint_error_deadline: None,
             dismissed_product_announcement: None,
+            visual_bell_until: None,
         }
     }
 
@@ -1882,11 +1886,27 @@ impl ClientShellState {
         false
     }
 
+    pub(crate) fn trigger_visual_bell(&mut self, now: std::time::Instant) {
+        self.visual_bell_until = Some(now + std::time::Duration::from_millis(60));
+    }
+
+    pub(crate) fn tick_visual_bell(&mut self, now: std::time::Instant) -> bool {
+        if self
+            .visual_bell_until
+            .is_some_and(|deadline| now >= deadline)
+        {
+            self.visual_bell_until = None;
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn timer_delay(&self, now: std::time::Instant) -> std::time::Duration {
         let default = std::time::Duration::from_millis(100);
         self.selection_autoscroll_deadline
             .into_iter()
             .chain(self.selection_repaint_deadline)
+            .chain(self.visual_bell_until)
             .min()
             .map(|deadline| deadline.saturating_duration_since(now).min(default))
             .unwrap_or(default)

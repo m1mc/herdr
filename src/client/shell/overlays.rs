@@ -227,37 +227,75 @@ fn panel(
     if a.width < 2 || a.height < 2 {
         return None;
     }
-    let background = Style::default().bg(bg).remove_modifier(Modifier::DIM);
-    let border = Style::default().fg(c).bg(bg).remove_modifier(Modifier::DIM);
+    for y in a.y..a.bottom() {
+        if a.x > 0 {
+            let left_cell = &b[(a.x - 1, y)];
+            if unicode_width::UnicodeWidthStr::width(left_cell.symbol()) > 1 || b[(a.x, y)].skip {
+                let style = left_cell.style();
+                let cell = &mut b[(a.x - 1, y)];
+                cell.reset();
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+            if a.x > 1 && b[(a.x - 1, y)].skip {
+                let style = b[(a.x - 2, y)].style();
+                let cell = &mut b[(a.x - 2, y)];
+                cell.reset();
+                cell.set_symbol(" ");
+                cell.set_style(style);
+            }
+        }
+        if a.right() < b.area.right() && b[(a.right(), y)].skip {
+            let style = b[(a.right(), y)].style();
+            let cell = &mut b[(a.right(), y)];
+            cell.reset();
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+    let background = Style::default().bg(bg);
+    let border = Style::default().fg(c).bg(bg);
     for y in a.y..a.bottom() {
         for x in a.x..a.right() {
-            b[(x, y)].set_symbol(" ").set_style(background);
+            let cell = &mut b[(x, y)];
+            cell.reset();
+            cell.set_symbol(" ");
+            cell.set_style(background);
         }
     }
     for x in a.x..a.right() {
-        b[(x, a.y)]
-            .set_symbol(if x == a.x {
-                "┌"
-            } else if x + 1 == a.right() {
-                "┐"
-            } else {
-                "─"
-            })
-            .set_style(border);
+        let top = &mut b[(x, a.y)];
+        top.reset();
+        top.set_symbol(if x == a.x {
+            "┌"
+        } else if x + 1 == a.right() {
+            "┐"
+        } else {
+            "─"
+        });
+        top.set_style(border);
         let y = a.bottom() - 1;
-        b[(x, y)]
-            .set_symbol(if x == a.x {
-                "└"
-            } else if x + 1 == a.right() {
-                "┘"
-            } else {
-                "─"
-            })
-            .set_style(border);
+        let bottom = &mut b[(x, y)];
+        bottom.reset();
+        bottom.set_symbol(if x == a.x {
+            "└"
+        } else if x + 1 == a.right() {
+            "┘"
+        } else {
+            "─"
+        });
+        bottom.set_style(border);
     }
     for y in a.y + 1..a.bottom() - 1 {
-        b[(a.x, y)].set_symbol("│").set_style(border);
-        b[(a.right() - 1, y)].set_symbol("│").set_style(border);
+        let left = &mut b[(a.x, y)];
+        left.reset();
+        left.set_symbol("│");
+        left.set_style(border);
+
+        let right = &mut b[(a.right() - 1, y)];
+        right.reset();
+        right.set_symbol("│");
+        right.set_style(border);
     }
     Some(Rect::new(a.x + 1, a.y + 1, a.width - 2, a.height - 2))
 }
@@ -1314,4 +1352,77 @@ fn render_confirm_close_overlay(
         cursor: None,
         ..OverlayRender::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    #[test]
+    fn panel_clears_underlying_cell_modifiers_and_skip() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 10));
+        // Simulate background cells with UNDERLINED and skip
+        for y in 0..10 {
+            for x in 0..10 {
+                let cell = &mut buffer[(x, y)];
+                cell.set_symbol("x");
+                cell.set_style(Style::default().add_modifier(Modifier::UNDERLINED | Modifier::DIM));
+                cell.skip = true;
+            }
+        }
+
+        let panel_rect = Rect::new(2, 2, 6, 6);
+        let inner = panel(&mut buffer, panel_rect, Color::Blue, Color::Black).unwrap();
+        assert_eq!(inner, Rect::new(3, 3, 4, 4));
+
+        // Check border and interior cells: all must have NO modifiers and skip = false
+        for y in panel_rect.y..panel_rect.bottom() {
+            for x in panel_rect.x..panel_rect.right() {
+                let cell = &buffer[(x, y)];
+                assert_eq!(
+                    cell.modifier,
+                    Modifier::empty(),
+                    "cell at ({x}, {y}) must have empty modifiers"
+                );
+                assert!(!cell.skip, "cell at ({x}, {y}) must not be skipped");
+            }
+        }
+    }
+
+    #[test]
+    fn panel_sanitizes_wide_character_crossing_left_boundary() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 10));
+        // Place a wide CJK character at column 1 (spans col 1 and 2)
+        buffer[(1, 3)].set_symbol("局");
+        buffer[(2, 3)].set_symbol("");
+        buffer[(2, 3)].skip = true;
+
+        let panel_rect = Rect::new(2, 2, 6, 6);
+        panel(&mut buffer, panel_rect, Color::Blue, Color::Black).unwrap();
+
+        // Left cell (1, 3) must be cleared to a space of width 1
+        let left_cell = &buffer[(1, 3)];
+        assert_eq!(left_cell.symbol(), " ");
+        assert_eq!(unicode_width::UnicodeWidthStr::width(left_cell.symbol()), 1);
+
+        // Border cell (2, 3) must be the border character and not skipped
+        let border_cell = &buffer[(2, 3)];
+        assert_eq!(border_cell.symbol(), "│");
+        assert!(!border_cell.skip);
+    }
+
+    #[test]
+    fn panel_sanitizes_continuation_cell_at_right_boundary() {
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 10, 10));
+        let panel_rect = Rect::new(2, 2, 6, 6);
+        // Column panel_rect.right() = 8. Simulate continuation cell at 8
+        buffer[(8, 3)].skip = true;
+
+        panel(&mut buffer, panel_rect, Color::Blue, Color::Black).unwrap();
+
+        let right_cell = &buffer[(8, 3)];
+        assert_eq!(right_cell.symbol(), " ");
+        assert!(!right_cell.skip);
+    }
 }

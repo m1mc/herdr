@@ -23,6 +23,7 @@ fn toast_index(delivery: crate::config::ToastDelivery) -> usize {
         crate::config::ToastDelivery::Herdr => 1,
         crate::config::ToastDelivery::Terminal => 2,
         crate::config::ToastDelivery::System => 3,
+        crate::config::ToastDelivery::All => 4,
     }
 }
 
@@ -49,7 +50,14 @@ impl ClientShellState {
         match section {
             ClientSettingsSection::Theme => theme_index(&self.config.theme_name),
             ClientSettingsSection::Indicators => indicator_index(self.config.status_indicators),
-            ClientSettingsSection::Sound => usize::from(!self.config.sound_enabled),
+            ClientSettingsSection::Sound => {
+                match (self.config.sound_enabled, self.config.visual_bell_enabled) {
+                    (true, false) => 0,
+                    (false, true) => 1,
+                    (true, true) => 2,
+                    (false, false) => 3,
+                }
+            }
             ClientSettingsSection::Toast => toast_index(self.config.toast_delivery),
             ClientSettingsSection::OfflineHosts => usize::from(self.config.hide_offline_hosts),
             ClientSettingsSection::Integrations => 0,
@@ -99,9 +107,9 @@ impl ClientShellState {
             Some(ClientShellOverlay::Settings(settings)) => match settings.section {
                 ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
                 ClientSettingsSection::Indicators
-                | ClientSettingsSection::Sound
                 | ClientSettingsSection::OfflineHosts => 2,
-                ClientSettingsSection::Toast => 4,
+                ClientSettingsSection::Sound
+                | ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
             },
             _ => 0,
@@ -211,14 +219,24 @@ impl ClientShellState {
                 );
             }
             ClientSettingsSection::Sound => {
-                self.save_settings_edit(crate::config::ConfigEdit::Sound(selected == 0), outcome);
+                let (sound, visual_bell) = match selected {
+                    0 => (true, false),
+                    1 => (false, true),
+                    2 => (true, true),
+                    _ => (false, false),
+                };
+                self.save_settings_edit(
+                    crate::config::ConfigEdit::Alerts { sound, visual_bell },
+                    outcome,
+                );
             }
             ClientSettingsSection::Toast => {
                 let delivery = match selected {
                     0 => crate::config::ToastDelivery::Off,
                     1 => crate::config::ToastDelivery::Herdr,
                     2 => crate::config::ToastDelivery::Terminal,
-                    _ => crate::config::ToastDelivery::System,
+                    3 => crate::config::ToastDelivery::System,
+                    _ => crate::config::ToastDelivery::All,
                 };
                 self.save_settings_edit(
                     crate::config::ConfigEdit::ToastDelivery(delivery),
