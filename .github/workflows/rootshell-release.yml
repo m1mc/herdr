@@ -187,7 +187,7 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
           name: ${{ github.event.inputs.release_tag || github.ref_name }}
-          prerelease: true
+          make_latest: true
           generate_release_notes: true
           body: |
             ## Herdr Multiplatform Rootshell Release

@@ -1,4 +1,4 @@
-name: Windows ARM64 Sync and Release
+name: Upstream Sync and Rootshell Release
 
 on:
   schedule:
@@ -10,141 +10,79 @@ on:
         type: boolean
         required: false
         default: true
-      build_release:
-        description: "Build Windows ARM64 release"
+      merge_to_rootshell:
+        description: "Merge upstream master into arm64-rootshell branch"
         type: boolean
         required: false
         default: true
-      release_tag:
-        description: "Release tag to publish (leave empty for snapshot or ref tag)"
+      trigger_release:
+        description: "Bump tag and trigger multiplatform release if new commits exist"
+        type: boolean
         required: false
-        default: ""
-  push:
-    tags:
-      - "v*-rootshell.*"
-      - "v*-arm64.*"
+        default: true
 
 permissions:
   contents: write
 
 jobs:
-  sync-upstream:
-    name: Sync Master from Upstream
+  sync-and-release:
+    name: Sync Upstream & Trigger Release
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && (inputs.sync_upstream == true || github.event.inputs.sync_upstream == 'true'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: arm64-rootshell
           fetch-depth: 0
+          submodules: recursive
 
-      - name: Sync master and tags from kitknox/herdr
+      - name: Configure Git
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git remote add upstream https://github.com/kitknox/herdr.git || true
-          git fetch upstream master:master --tags
-          git push origin master:master --tags
 
-  build-arm64:
-    name: Build Windows ARM64 (Native / Cross)
-    needs: [sync-upstream]
-    if: always() && !cancelled() && (github.event_name == 'push' || github.event_name == 'schedule' || inputs.build_release == true || github.event.inputs.build_release == 'true')
-    runs-on: windows-latest
-    env:
-      RUST_TOOLCHAIN: 1.96.1
-      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@v1
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: aarch64-pc-windows-msvc
-
-      - name: Install Zig
-        uses: vercel-labs/setup-zig@v1.0.2
-        with:
-          version: 0.16.0
-
-      - name: Clean Zig Cache
-        shell: pwsh
+      - name: Fetch Upstream
         run: |
-          Remove-Item -Recurse -Force .zig-cache -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force vendor/libghostty-vt/.zig-cache -ErrorAction SilentlyContinue
-          Remove-Item -Recurse -Force vendor/libghostty-vt/zig-out -ErrorAction SilentlyContinue
+          git fetch upstream master --tags
 
-      - name: Build herdr (aarch64-pc-windows-msvc)
-        shell: pwsh
+      - name: Sync Master
+        if: github.event_name == 'schedule' || inputs.sync_upstream == true
         run: |
-          $env:ZIG = (Get-Command zig).Source
-          $tag = if ("${{ github.event.inputs.release_tag }}" -ne "") { "${{ github.event.inputs.release_tag }}" } elseif ("${{ github.ref_name }}" -match "^v") { "${{ github.ref_name }}" } else { "snapshot" }
-          if ($tag -match "^v(?<base>[^-]+)-rootshell\.(?<id>.+)$") {
-              $env:HERDR_BUILD_CHANNEL = "rootshell"
-              $env:HERDR_BUILD_ID = $Matches.id
-          }
-          cargo build --release --locked --target aarch64-pc-windows-msvc
+          git push origin refs/remotes/upstream/master:refs/heads/master --tags || true
 
-      - name: Stage ConPTY & Package Zip
-        shell: pwsh
+      - name: Check for new commits & Merge to arm64-rootshell
+        id: merge
         run: |
-          $ErrorActionPreference = "Stop"
-          $tag = if ("${{ github.event.inputs.release_tag }}" -ne "") { "${{ github.event.inputs.release_tag }}" } elseif ("${{ github.ref_name }}" -match "^v") { "${{ github.ref_name }}" } else { "snapshot" }
-          $stage = Join-Path $env:RUNNER_TEMP "stage-aarch64"
-          $nupkg = Join-Path $env:RUNNER_TEMP "conpty.nupkg"
-          $zipName = "herdr-$tag-aarch64-pc-windows-msvc.zip"
-          python scripts/package_windows_conpty.py stage `
-            --architecture aarch64 `
-            --package $nupkg `
-            --herdr-exe target/aarch64-pc-windows-msvc/release/herdr.exe `
-            --output-dir $stage
-          Compress-Archive -Path "$stage/*" -DestinationPath $zipName -Force
-          $hash = (Get-FileHash -Algorithm SHA256 $zipName).Hash.ToLowerInvariant()
-          "$hash  $zipName" | Out-File -Encoding utf8 SHA256SUMS.txt
+          ahead_count=$(git rev-list --count HEAD..upstream/master || echo 0)
+          echo "ahead_count=$ahead_count"
+          if [ "$ahead_count" -gt 0 ] && [ "${{ inputs.merge_to_rootshell != false }}" = "true" ]; then
+            echo "Upstream is ahead by $ahead_count commits. Merging upstream/master into arm64-rootshell..."
+            git merge --no-edit -m "chore: integrate upstream changes ($ahead_count commits)" upstream/master
+            git push origin arm64-rootshell
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No new upstream commits to merge."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
 
-          $baseVer = "0.9.5"
-          $buildId = "0.1.10"
-          if ($tag -match "^v(?<base>[^-]+)-rootshell\.(?<id>.+)$") {
-              $baseVer = $Matches.base
-              $buildId = $Matches.id
-          }
-          $manifest = [ordered]@{
-              base_version = $baseVer
-              version = $buildId
-              notes = "Native Windows ARM64 release with ConPTY cursor alignment fix and auto-update support."
-              assets = @{
-                  "windows-aarch64" = @{
-                      url = "https://github.com/m1mc/herdr/releases/download/$tag/$zipName"
-                      sha256 = $hash
-                      format = "zip"
-                  }
-              }
-              sha256 = @{
-                  "windows-aarch64" = $hash
-              }
-          }
-          $manifest | ConvertTo-Json -Depth 5 | Out-File -Encoding utf8 distribution/rootshell.json
+      - name: Bump Tag and Trigger Multiplatform Release
+        if: (steps.merge.outputs.has_changes == 'true' || github.event_name == 'workflow_dispatch') && (inputs.trigger_release == true || github.event_name == 'schedule')
+        run: |
+          base_ver=$(grep '^version = ' Cargo.toml | head -1 | cut -d '"' -f2)
+          latest_tag=$(git tag -l "v*-rootshell.*" | sort -V | tail -n 1 || echo "")
+          echo "Latest tag found: $latest_tag"
 
-          echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
-          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          next_id="0.1.14"
+          if [[ "$latest_tag" =~ ^v.*-rootshell\.([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            maj="${BASH_REMATCH[1]}"
+            min="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+            next_patch=$((patch + 1))
+            next_id="${maj}.${min}.${next_patch}"
+          fi
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') || (github.event.inputs.release_tag != '' && github.event.inputs.release_tag != 'snapshot')
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          files: |
-            ${{ env.ZIP_PATH }}
-            SHA256SUMS.txt
-            distribution/rootshell.json
-          body: |
-            ## Herdr Windows ARM64 (Native Release with ConPTY Fix)
-
-            - Built for `aarch64-pc-windows-msvc`
-            - Bundles native ARM64 `conpty.dll` and `arm64\OpenConsole.exe`
-            - Includes fix for Windows ConPTY terminal resize cursor drift (`PageList.zig`)
-            - Integrated with `rootshell.json` for seamless `herdr update` auto-updates
+          new_tag="v${base_ver}-rootshell.${next_id}"
+          echo "Creating new release tag: $new_tag"
+          git tag "$new_tag"
+          git push origin "$new_tag"
