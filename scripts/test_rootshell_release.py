@@ -1,6 +1,8 @@
+import fnmatch
 import hashlib
 import importlib.util
 import os
+import re
 import subprocess
 from pathlib import Path
 import tempfile
@@ -12,6 +14,49 @@ spec.loader.exec_module(rootshell)
 
 
 class RootshellReleaseTests(unittest.TestCase):
+    def test_release_tags_have_one_publishing_workflow(self):
+        workflows = [
+            Path('.github/workflows/rootshell-release.yml'),
+            Path('.github/workflows/arm64-sync-and-release.yml'),
+        ]
+        patterns = {}
+        for path in workflows:
+            if not path.exists():
+                continue
+            tags = re.search(
+                r'(?m)^  push:\n    tags:\n((?:      - .*\n)+)', path.read_text()
+            )
+            self.assertIsNotNone(tags, str(path))
+            patterns[path.name] = re.findall(r'"([^"]+)"', tags[1])
+        for tag, expected in [
+            ('rootshell-v0.1.14', ['rootshell-release.yml']),
+            ('v0.9.5-rootshell.0.1.14', ['rootshell-release.yml']),
+            ('v0.9.5-arm64.0.1.14', []),
+        ]:
+            with self.subTest(tag=tag):
+                publishers = [
+                    name for name, globs in patterns.items()
+                    if any(fnmatch.fnmatchcase(tag, glob) for glob in globs)
+                ]
+                self.assertEqual(publishers, expected)
+
+    def test_channel_publish_failure_fails_the_workflow_step(self):
+        workflow = Path('.github/workflows/rootshell-release.yml').read_text()
+        step = workflow.split('      - name: Publish fork update channel\n', 1)[1]
+        run = step.split('        run: |\n', 1)[1]
+        command = '\n'.join(re.findall(r'(?m)^          (.*)$', run))
+        self.assertTrue(command.strip())
+        with tempfile.TemporaryDirectory() as folder:
+            python = Path(folder) / 'python3'
+            python.write_text('#!/bin/sh\nexit 42\n')
+            python.chmod(0o755)
+            result = subprocess.run(
+                ['sh', '-e', '-c', command],
+                env=dict(os.environ, PATH=f'{folder}:/usr/bin:/bin'),
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 42)
+
     def test_channel_promotion_never_regresses(self):
         self.assertTrue(rootshell.should_promote({'version': '0.1.9'}, {'version': '0.1.10'}))
         self.assertFalse(rootshell.should_promote({'version': '0.2.0'}, {'version': '0.1.10'}))

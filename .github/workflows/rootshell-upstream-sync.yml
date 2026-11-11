@@ -1,0 +1,43 @@
+name: Rootshell upstream sync
+
+on:
+  schedule:
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Fetch and inspect upstream without pushing or publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: rootshell-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GIT_AUTHOR_NAME: github-actions[bot]
+      GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      GIT_COMMITTER_NAME: github-actions[bot]
+      GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: arm64-rootshell
+          fetch-depth: 0
+
+      - name: Sync upstream and dispatch releases for new tags
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          python3 -m unittest scripts.test_rootshell_release scripts.test_rootshell_sync
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          python3 scripts/rootshell_sync.py "${args[@]}"

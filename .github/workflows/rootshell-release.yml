@@ -5,19 +5,18 @@ on:
     inputs:
       release_tag:
         description: "Release tag (e.g. v0.9.5-rootshell.0.1.12)"
-        required: false
+        required: true
         default: ""
   push:
     tags:
       - "rootshell-v*"
       - "v*-rootshell.*"
-      - "v*-arm64.*"
 
 permissions:
   contents: write
 
 concurrency:
-  group: rootshell-release-${{ github.ref }}
+  group: rootshell-release-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -55,6 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
           submodules: recursive
 
       - uses: dtolnay/rust-toolchain@v1
@@ -100,7 +100,7 @@ jobs:
             export HERDR_BUILD_CHANNEL=rootshell
             export HERDR_BUILD_ID="0.1.12"
           fi
-          export HERDR_BUILD_COMMIT="$GITHUB_SHA"
+          export HERDR_BUILD_COMMIT="$(git rev-parse HEAD)"
           cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Build Windows
@@ -116,7 +116,7 @@ jobs:
               $env:HERDR_BUILD_CHANNEL = "rootshell"
               $env:HERDR_BUILD_ID = $Matches.id
           }
-          $env:HERDR_BUILD_COMMIT = "$env:GITHUB_SHA"
+          $env:HERDR_BUILD_COMMIT = (git rev-parse HEAD)
           cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package Unix artifact
@@ -165,6 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.release_tag || github.ref }}
           submodules: recursive
 
       - uses: actions/download-artifact@v4
@@ -174,12 +175,12 @@ jobs:
 
       - name: Prepare installer and update manifest
         run: |
-          python3 -m unittest scripts.test_rootshell_release
+          python3 -m unittest scripts.test_rootshell_release scripts.test_rootshell_sync
           cp scripts/rootshell-install.sh release-assets/install.sh
           cp distribution/install.ps1 release-assets/install.ps1
           tag="${{ github.event.inputs.release_tag }}"
           if [ -z "$tag" ]; then tag="${GITHUB_REF_NAME:-v0.9.5-rootshell.0.1.12}"; fi
-          GITHUB_REF_NAME="$tag" python3 scripts/rootshell-manifest.py
+          GITHUB_SHA="$(git rev-parse HEAD)" GITHUB_REF_NAME="$tag" python3 scripts/rootshell-manifest.py
           cat release-assets/rootshell.json
 
       - name: Create or update Release
@@ -193,7 +194,7 @@ jobs:
             ## Herdr Multiplatform Rootshell Release
 
             Features:
-            - **URL Click Browser Spawn**: Preserves terminal OSC 8 hyperlinks and dispatches safe web URLs on click without mouse replay gating.
+            - **URL Click Browser Spawn**: Preserves terminal OSC 8 hyperlinks and dispatches safe web URLs while the original click target remains valid.
             - **Windows ARM64 Native**: First-class support for `aarch64-pc-windows-msvc` with ConPTY integration.
             - **Multiplatform Packages**: Built for macOS (Apple Silicon + Intel), Ubuntu/Linux (x86_64 + aarch64), and Windows 11 (x64 + arm64).
 
@@ -224,4 +225,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/rootshell-manifest.py --promote || true
+          python3 scripts/rootshell-manifest.py --promote
