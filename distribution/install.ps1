@@ -790,7 +790,7 @@ if ($useLocalPackage) {
     }
 
     if ([string]::IsNullOrWhiteSpace($ManifestUrl)) {
-        $ManifestUrl = "https://raw.githubusercontent.com/m1mc/herdr/arm64-rootshell/distribution/rootshell.json"
+        $ManifestUrl = "https://github.com/m1mc/herdr/releases/download/rootshell-channel/rootshell.json"
     }
 
     Write-Step "Fetching Herdr $Channel manifest"

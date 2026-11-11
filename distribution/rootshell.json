@@ -1,15 +1,35 @@
 {
+  "version": "0.1.13",
   "base_version": "0.9.5",
-  "version": "0.1.10",
-  "notes": "Native Windows ARM64 release with ConPTY cursor alignment fix, rootshell update redirection, and unelevated client permission defaults.",
+  "protocol": 22,
+  "endpoint_generation": 1,
+  "notes": "Rootshell v0.9.5-rootshell.0.1.13\n\nBuilt from 75252c9c387e9f5c7d61969b5870438e65ecfa39.",
   "assets": {
+    "linux-x86_64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-linux-x86_64",
+      "sha256": "8e36c54f3d2e806cc8e1618de104d6b074a60219be21851b8a46389284edc9a0"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-linux-aarch64",
+      "sha256": "3a370e3e3c47aeabb2fe983e5d3881dacd717b58b614f665280e14027a5ebb0c"
+    },
+    "macos-x86_64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-macos-x86_64",
+      "sha256": "82a6428dcc09fa690800acd7915690d613e1b1594a977090639192fe5d4d59ac"
+    },
+    "macos-aarch64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-macos-aarch64",
+      "sha256": "ec61a70395bc0da37221e441c307b1a735a7d808f65e34866aa45e3d921fd924"
+    },
+    "windows-x86_64": {
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-windows-x86_64.zip",
+      "sha256": "80c1133c52921346452c4f12a02f96d1b883b58579b0ae1b167bfa785d87621e",
+      "format": "zip"
+    },
     "windows-aarch64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.10/herdr-0.9.5-rootshell.0.1.10-aarch64-pc-windows-msvc.zip",
-      "sha256": "2af29d085e329a5619a7c474535b7926642440b654e5231351e6b08250457d3c",
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-windows-aarch64.zip",
+      "sha256": "054d4571f5a67f9174e0d3daa4802d503b3137a6d4046999967f07f26d4ccd87",
       "format": "zip"
     }
-  },
-  "sha256": {
-    "windows-aarch64": "2af29d085e329a5619a7c474535b7926642440b654e5231351e6b08250457d3c"
   }
 }
