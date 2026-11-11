@@ -194,10 +194,14 @@ impl ClientShellState {
             let target_active =
                 self.notification_target_is_active(&pending.endpoint_id, &pending.event);
             let suppress_external = target_active && self.outer_focused != Some(false);
+            // While the target pane is visible and focused, Finished or soundless
+            // notifications must not emit local sound or a visual bell.
+            let suppress_active_target_alert = (pending.event.kind
+                == SemanticNotificationKind::Finished
+                || pending.event.sound.is_none())
+                && suppress_external;
             if let Some(sound) = pending.event.sound {
-                let suppress_sound =
-                    pending.event.kind == SemanticNotificationKind::Finished && suppress_external;
-                if !suppress_sound {
+                if !suppress_active_target_alert {
                     effects.push(ClientShellNotificationEffect::Sound {
                         sound: match sound {
                             SemanticNotificationSound::Done => crate::sound::Sound::Done,
@@ -205,22 +209,34 @@ impl ClientShellState {
                         },
                         agent: pending.event.agent.clone(),
                     });
-                    if self.config.visual_bell_enabled {
-                        effects.push(ClientShellNotificationEffect::VisualBell);
-                        self.trigger_visual_bell(now);
-                        repaint = true;
-                    }
                 }
-            } else if self.config.visual_bell_enabled && !suppress_external {
+            }
+            if self.config.visual_bell_enabled && !suppress_active_target_alert {
                 effects.push(ClientShellNotificationEffect::VisualBell);
                 self.trigger_visual_bell(now);
                 repaint = true;
             }
 
-            let show_herdr = matches!(
-                self.config.toast_delivery,
-                crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
-            ) && (!target_active || pending.event.kind == SemanticNotificationKind::Custom);
+            let show_herdr = self.config.toast_delivery.includes_herdr()
+                && (!target_active || pending.event.kind == SemanticNotificationKind::Custom);
+            let show_terminal =
+                self.config.toast_delivery.includes_terminal() && !suppress_external;
+            let show_system = self.config.toast_delivery.includes_system() && !suppress_external;
+
+            #[cfg(windows)]
+            let system_target = if show_system {
+                pending.event.pane_id.as_ref().and_then(|pane_id| {
+                    self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
+                        ClientSystemNotificationTarget {
+                            endpoint_id: pending.endpoint_id.clone(),
+                            boot_id: boot_id.to_owned(),
+                            pane_id: pane_id.clone(),
+                        }
+                    })
+                })
+            } else {
+                None
+            };
 
             if show_herdr {
                 self.queue_visible_notification(
@@ -234,39 +250,18 @@ impl ClientShellState {
                 repaint = true;
             }
 
-            let show_terminal = matches!(
-                self.config.toast_delivery,
-                crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::All
-            ) && !suppress_external;
-
             if show_terminal {
                 effects.push(ClientShellNotificationEffect::Terminal {
                     title: pending.event.title.clone(),
                     body: pending.event.body.clone(),
                 });
             }
-
-            let show_system = matches!(
-                self.config.toast_delivery,
-                crate::config::ToastDelivery::System | crate::config::ToastDelivery::All
-            ) && !suppress_external;
-
             if show_system {
-                #[cfg(windows)]
-                let target = pending.event.pane_id.as_ref().and_then(|pane_id| {
-                    self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
-                        ClientSystemNotificationTarget {
-                            endpoint_id: pending.endpoint_id.clone(),
-                            boot_id: boot_id.to_owned(),
-                            pane_id: pane_id.clone(),
-                        }
-                    })
-                });
                 effects.push(ClientShellNotificationEffect::System {
                     title: pending.event.title,
                     body: pending.event.body,
                     #[cfg(windows)]
-                    target,
+                    target: system_target,
                 });
             }
         }

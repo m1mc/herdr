@@ -2,10 +2,6 @@
 pub(crate) enum ConfigEdit<'a> {
     Theme(&'a str),
     StatusIndicators(super::StatusIndicatorStyle),
-    #[allow(dead_code)]
-    Sound(bool),
-    #[allow(dead_code)]
-    VisualBell(bool),
     Alerts { sound: bool, visual_bell: bool },
     ToastDelivery(super::ToastDelivery),
     HideOfflineHosts(bool),
@@ -16,8 +12,6 @@ impl ConfigEdit<'_> {
         match self {
             Self::Theme(_) => "theme",
             Self::StatusIndicators(_) => "status indicators",
-            Self::Sound(_) => "sound setting",
-            Self::VisualBell(_) => "visual bell setting",
             Self::Alerts { .. } => "alert settings",
             Self::ToastDelivery(_) => "toast setting",
             Self::HideOfflineHosts(_) => "hide offline hosts setting",
@@ -37,14 +31,11 @@ impl ConfigEdit<'_> {
                 "status_indicators",
                 &format!("\"{}\"", style.as_str()),
             ),
-            Self::Sound(enabled) => {
-                super::upsert_section_bool(content, "ui.sound", "enabled", enabled)
-            }
-            Self::VisualBell(enabled) => {
-                super::upsert_section_bool(content, "ui.bell", "visual_bell", enabled)
-            }
             Self::Alerts { sound, visual_bell } => {
                 let content = super::upsert_section_bool(content, "ui.sound", "enabled", sound);
+                // Remove the legacy ui.sound.visual_bell key so it cannot
+                // override the new ui.bell.visual_bell value.
+                let content = super::remove_section_key(&content, "ui.sound", "visual_bell");
                 super::upsert_section_bool(&content, "ui.bell", "visual_bell", visual_bell)
             }
             Self::ToastDelivery(delivery) => {
@@ -140,31 +131,27 @@ mod tests {
     }
 
     #[test]
-    fn config_edit_visual_bell_applies() {
-        let initial = "[ui]\nsidebar_width = 32\n";
-        let updated = ConfigEdit::VisualBell(true).apply(initial);
-        let config: super::super::Config = toml::from_str(&updated).expect("valid config");
-        assert!(config.ui.bell.visual_bell);
-        assert!(config.ui.visual_bell_enabled());
-
-        let updated_false = ConfigEdit::VisualBell(false).apply(&updated);
-        let config: super::super::Config = toml::from_str(&updated_false).expect("valid config");
-        assert!(!config.ui.bell.visual_bell);
-        assert!(!config.ui.visual_bell_enabled());
-    }
-
-    #[test]
-    fn config_edit_alerts_applies() {
-        let initial = "[ui]\nsidebar_width = 32\n";
-        let updated = ConfigEdit::Alerts { sound: false, visual_bell: true }.apply(initial);
+    fn config_edit_alerts_applies_and_clears_legacy_sound_visual_bell() {
+        let initial = "[ui]\nsidebar_width = 32\n\n[ui.sound]\nvisual_bell = true\n";
+        let updated = ConfigEdit::Alerts {
+            sound: false,
+            visual_bell: true,
+        }
+        .apply(initial);
         let config: super::super::Config = toml::from_str(&updated).expect("valid config");
         assert!(!config.ui.sound.enabled);
+        assert_eq!(config.ui.sound.visual_bell, None);
         assert!(config.ui.bell.visual_bell);
         assert!(config.ui.visual_bell_enabled());
 
-        let updated_sound = ConfigEdit::Alerts { sound: true, visual_bell: false }.apply(&updated);
+        let updated_sound = ConfigEdit::Alerts {
+            sound: true,
+            visual_bell: false,
+        }
+        .apply(&updated);
         let config: super::super::Config = toml::from_str(&updated_sound).expect("valid config");
         assert!(config.ui.sound.enabled);
+        assert_eq!(config.ui.sound.visual_bell, None);
         assert!(!config.ui.bell.visual_bell);
         assert!(!config.ui.visual_bell_enabled());
     }

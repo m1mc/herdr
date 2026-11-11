@@ -150,6 +150,17 @@ impl HeadlessServer {
         self.tab_geometry_controllers.retain(|tab_id, client_id| {
             topology.tab_workspace_ids.contains_key(tab_id) && live_clients.contains(client_id)
         });
+        let live_panes = self
+            .app
+            .state
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.tabs.iter())
+            .flat_map(|tab| tab.panes.keys().copied())
+            .collect::<HashSet<_>>();
+        self.pane_last_input_clients.retain(|pane_id, client_id| {
+            live_clients.contains(client_id) && live_panes.contains(pane_id)
+        });
         self.prune_control_tab_geometry(|tab_id| topology.tab_workspace_ids.contains_key(tab_id));
         self.sync_control_geometry_tabs();
         for client in self

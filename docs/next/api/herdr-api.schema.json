@@ -3221,6 +3221,12 @@
                 "null"
               ]
             },
+            "pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "position": {
               "anyOf": [
                 {

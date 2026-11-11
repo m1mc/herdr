@@ -218,6 +218,17 @@ pub(crate) fn render_context_menu(
     })
 }
 
+fn reset_cell_with_symbol(cell: &mut ratatui::buffer::Cell, symbol: &str, style: Style) {
+    cell.reset();
+    cell.set_symbol(symbol);
+    cell.set_style(style);
+}
+
+fn clear_cell_preserving_style(cell: &mut ratatui::buffer::Cell) {
+    let style = cell.style();
+    reset_cell_with_symbol(cell, " ", style);
+}
+
 fn panel(
     b: &mut Buffer,
     a: Rect,
@@ -229,73 +240,52 @@ fn panel(
     }
     for y in a.y..a.bottom() {
         if a.x > 0 {
-            let left_cell = &b[(a.x - 1, y)];
-            if unicode_width::UnicodeWidthStr::width(left_cell.symbol()) > 1 || b[(a.x, y)].skip {
-                let style = left_cell.style();
-                let cell = &mut b[(a.x - 1, y)];
-                cell.reset();
-                cell.set_symbol(" ");
-                cell.set_style(style);
+            if b[(a.x, y)].skip || display_width(b[(a.x - 1, y)].symbol()) > 1 {
+                clear_cell_preserving_style(&mut b[(a.x - 1, y)]);
             }
             if a.x > 1 && b[(a.x - 1, y)].skip {
-                let style = b[(a.x - 2, y)].style();
-                let cell = &mut b[(a.x - 2, y)];
-                cell.reset();
-                cell.set_symbol(" ");
-                cell.set_style(style);
+                clear_cell_preserving_style(&mut b[(a.x - 2, y)]);
             }
         }
         if a.right() < b.area.right() && b[(a.right(), y)].skip {
-            let style = b[(a.right(), y)].style();
-            let cell = &mut b[(a.right(), y)];
-            cell.reset();
-            cell.set_symbol(" ");
-            cell.set_style(style);
+            clear_cell_preserving_style(&mut b[(a.right(), y)]);
         }
     }
     let background = Style::default().bg(bg);
     let border = Style::default().fg(c).bg(bg);
-    for y in a.y..a.bottom() {
-        for x in a.x..a.right() {
-            let cell = &mut b[(x, y)];
-            cell.reset();
-            cell.set_symbol(" ");
-            cell.set_style(background);
+    for y in a.y + 1..a.bottom() - 1 {
+        for x in a.x + 1..a.right() - 1 {
+            reset_cell_with_symbol(&mut b[(x, y)], " ", background);
         }
     }
     for x in a.x..a.right() {
-        let top = &mut b[(x, a.y)];
-        top.reset();
-        top.set_symbol(if x == a.x {
-            "┌"
-        } else if x + 1 == a.right() {
-            "┐"
-        } else {
-            "─"
-        });
-        top.set_style(border);
+        reset_cell_with_symbol(
+            &mut b[(x, a.y)],
+            if x == a.x {
+                "┌"
+            } else if x + 1 == a.right() {
+                "┐"
+            } else {
+                "─"
+            },
+            border,
+        );
         let y = a.bottom() - 1;
-        let bottom = &mut b[(x, y)];
-        bottom.reset();
-        bottom.set_symbol(if x == a.x {
-            "└"
-        } else if x + 1 == a.right() {
-            "┘"
-        } else {
-            "─"
-        });
-        bottom.set_style(border);
+        reset_cell_with_symbol(
+            &mut b[(x, y)],
+            if x == a.x {
+                "└"
+            } else if x + 1 == a.right() {
+                "┘"
+            } else {
+                "─"
+            },
+            border,
+        );
     }
     for y in a.y + 1..a.bottom() - 1 {
-        let left = &mut b[(a.x, y)];
-        left.reset();
-        left.set_symbol("│");
-        left.set_style(border);
-
-        let right = &mut b[(a.right() - 1, y)];
-        right.reset();
-        right.set_symbol("│");
-        right.set_style(border);
+        reset_cell_with_symbol(&mut b[(a.x, y)], "│", border);
+        reset_cell_with_symbol(&mut b[(a.right() - 1, y)], "│", border);
     }
     Some(Rect::new(a.x + 1, a.y + 1, a.width - 2, a.height - 2))
 }

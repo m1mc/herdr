@@ -976,6 +976,8 @@ impl HeadlessServer {
         let removed = self.clients.remove(&client_id);
         self.tab_geometry_controllers
             .retain(|_, controller_id| *controller_id != client_id);
+        self.pane_last_input_clients
+            .retain(|_, owner_id| *owner_id != client_id);
         self.sync_control_geometry_tabs();
         if let Some(mut removed) = removed {
             let held_inputs = removed.drain_shell_held_inputs();
@@ -2453,7 +2455,8 @@ impl HeadlessServer {
                         .track_shell_input(ClientShellInputTarget::Pane(pane_id.clone()), &events);
                 }
                 if interaction {
-                    self.pane_last_input_clients.insert(runtime_pane_id, client_id);
+                    self.pane_last_input_clients
+                        .insert(runtime_pane_id, client_id);
                 }
                 let foreground_changed =
                     interaction && self.promote_client_to_foreground(client_id);

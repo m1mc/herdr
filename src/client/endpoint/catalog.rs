@@ -376,8 +376,7 @@ pub(crate) fn catalog_path() -> PathBuf {
         .join("endpoints.json");
     #[cfg(windows)]
     if !primary.exists() && std::env::var_os("XDG_STATE_HOME").is_none() {
-        if let Some(profile) =
-            std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+        if let Some(profile) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
         {
             let app_dir = if cfg!(debug_assertions) {
                 "herdr-dev"

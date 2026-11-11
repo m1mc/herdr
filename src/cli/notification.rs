@@ -21,7 +21,7 @@ pub(super) fn run_notification_command(args: &[String]) -> std::io::Result<i32> 
 }
 
 fn notification_show(args: &[String]) -> std::io::Result<i32> {
-    let params = match parse_notification_show_args(args) {
+    let mut params = match parse_notification_show_args(args) {
         Ok(params) => params,
         Err(NotificationShowArgError::Usage) => {
             eprintln!(
@@ -34,6 +34,9 @@ fn notification_show(args: &[String]) -> std::io::Result<i32> {
             return Ok(2);
         }
     };
+    // Local callers notify their own pane. Remote targets must not receive the
+    // local HERDR_PANE_ID because pane ids belong to a different server.
+    params.pane_id = super::target::caller_pane_id();
 
     super::print_response(&super::send_request(&Request {
         id: "cli:notification:show".into(),
@@ -98,13 +101,12 @@ fn parse_notification_show_args(
         }
     }
 
-    let pane_id = std::env::var("HERDR_PANE_ID").ok();
     Ok(NotificationShowParams {
         title,
         body,
         position,
         sound,
-        pane_id,
+        pane_id: None,
     })
 }
 
@@ -168,7 +170,7 @@ mod tests {
                 body: Some("api workspace".into()),
                 position: Some(ToastHerdrPosition::TopRight),
                 sound: NotificationShowSound::Request,
-                pane_id: std::env::var("HERDR_PANE_ID").ok(),
+                pane_id: None,
             }
         );
     }

@@ -69,6 +69,20 @@ pub enum ToastDelivery {
     All,
 }
 
+impl ToastDelivery {
+    pub fn includes_herdr(self) -> bool {
+        matches!(self, Self::Herdr | Self::All)
+    }
+
+    pub fn includes_terminal(self) -> bool {
+        matches!(self, Self::Terminal | Self::All)
+    }
+
+    pub fn includes_system(self) -> bool {
+        matches!(self, Self::System | Self::All)
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema, Default,
 )]

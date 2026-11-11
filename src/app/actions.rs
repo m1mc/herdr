@@ -1404,10 +1404,7 @@ impl AppState {
                 self.update_install_command = install_command.clone();
                 self.latest_release_notes_available = true;
                 self.update_dismissed = true;
-                if matches!(
-                    self.toast_config.delivery,
-                    crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
-                ) {
+                if self.toast_config.delivery.includes_herdr() {
                     self.toast = Some(ToastNotification {
                         kind: ToastKind::UpdateInstalled,
                         title: format!("v{version} available"),
@@ -1423,12 +1420,7 @@ impl AppState {
             } => {
                 self.agent_manifest_update_status = status;
                 self.refresh_agent_manifest_summaries();
-                if !updated.is_empty()
-                    && matches!(
-                        self.toast_config.delivery,
-                        crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
-                    )
-                {
+                if !updated.is_empty() && self.toast_config.delivery.includes_herdr() {
                     let agent_list = updated
                         .iter()
                         .map(|item| {
@@ -2001,10 +1993,7 @@ impl AppState {
     }
 
     fn apply_agent_notification_delivery(&mut self, delivery: &AgentNotificationDelivery) {
-        if matches!(
-            self.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
-        ) {
+        if self.toast_config.delivery.includes_herdr() {
             if let Some(toast) = delivery.toast.clone() {
                 self.toast = Some(toast);
             }

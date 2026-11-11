@@ -155,7 +155,7 @@ impl ClientShellState {
             .is_some_and(|until| std::time::Instant::now() < until)
         {
             for cell in &mut frame.cells {
-                cell.modifier ^= 1 << 6;
+                cell.modifier ^= ratatui::style::Modifier::REVERSED.bits();
             }
         }
     }

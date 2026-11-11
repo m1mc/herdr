@@ -7,14 +7,16 @@ use crate::protocol;
 use crate::terminal::TerminalRuntimeRegistry;
 
 pub(crate) fn should_forward_toast_to_clients(delivery: config::ToastDelivery) -> bool {
-    toast_notify_kind(delivery).is_some()
+    delivery.includes_terminal() || delivery.includes_system()
 }
 
 pub(crate) fn toast_notify_kind(delivery: config::ToastDelivery) -> Option<protocol::NotifyKind> {
-    match delivery {
-        config::ToastDelivery::Terminal => Some(protocol::NotifyKind::Toast),
-        config::ToastDelivery::System | config::ToastDelivery::All => Some(protocol::NotifyKind::SystemToast),
-        config::ToastDelivery::Off | config::ToastDelivery::Herdr => None,
+    if delivery.includes_system() {
+        Some(protocol::NotifyKind::SystemToast)
+    } else if delivery.includes_terminal() {
+        Some(protocol::NotifyKind::Toast)
+    } else {
+        None
     }
 }
 

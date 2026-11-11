@@ -442,10 +442,7 @@ impl App {
         update: &crate::app::actions::PaneStateUpdate,
         previous_toast: &Option<crate::app::state::ToastNotification>,
     ) {
-        if !matches!(
-            self.state.toast_config.delivery,
-            crate::config::ToastDelivery::Herdr | crate::config::ToastDelivery::All
-        ) || self.state.toast == *previous_toast
+        if !self.state.toast_config.delivery.includes_herdr() || self.state.toast == *previous_toast
         {
             return;
         }

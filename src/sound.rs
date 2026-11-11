@@ -68,12 +68,7 @@ pub fn play(sound: Sound, config: &crate::config::SoundConfig) {
 fn sound_playback_disabled_by_env() -> bool {
     std::env::var_os(DISABLE_SOUND_ENV).is_some()
         || std::env::var_os("NEXTEST").is_some()
-        || std::env::var_os("SSH_CONNECTION").is_some()
-        || std::env::var_os("SSH_CLIENT").is_some()
-        || std::env::var_os("SSH_TTY").is_some()
-        || std::env::var_os("LC_TERMINAL").is_some_and(|v| v == "rootshell")
-        || std::env::var_os("LC_ROOTSHELL_PANE").is_some()
-        || std::env::var_os(crate::remote::REMOTE_KEYBINDINGS_ENV_VAR).is_some()
+        || crate::client::is_remote_or_ssh_session()
 }
 
 fn play_file(path: &Path) -> Result<(), String> {

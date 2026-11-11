@@ -59,6 +59,7 @@ use transport::*;
 pub(crate) use shell::{ClientShellConfig, ClientShellState};
 pub use startup::{run_client, run_terminal_attach};
 pub use terminal_sessions::{run_terminal_session_control, run_terminal_session_observe};
+pub(crate) use terminal_setup::is_remote_or_ssh_session;
 
 #[cfg(not(windows))]
 use terminal_geometry::query_host_terminal_appearance;

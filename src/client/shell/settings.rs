@@ -106,10 +106,8 @@ impl ClientShellState {
         match self.overlay.as_ref() {
             Some(ClientShellOverlay::Settings(settings)) => match settings.section {
                 ClientSettingsSection::Theme => crate::config::THEME_NAMES.len(),
-                ClientSettingsSection::Indicators
-                | ClientSettingsSection::OfflineHosts => 2,
-                ClientSettingsSection::Sound
-                | ClientSettingsSection::Toast => 4,
+                ClientSettingsSection::Indicators | ClientSettingsSection::OfflineHosts => 2,
+                ClientSettingsSection::Sound | ClientSettingsSection::Toast => 4,
                 ClientSettingsSection::Integrations => settings.integrations.len(),
             },
             _ => 0,

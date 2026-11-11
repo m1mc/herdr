@@ -1118,12 +1118,13 @@
           "key": "ui.toast.delivery",
           "type": "enum",
           "default": "\"off\"",
-          "description": "Popup notification delivery. off disables popups, herdr shows in-app toasts, terminal asks the outer terminal for a desktop notification, system asks the OS notification service directly.",
+          "description": "Popup notification delivery. off disables popups, herdr shows in-app toasts, terminal asks the outer terminal for a desktop notification, system asks the OS notification service directly, and all enables every channel.",
           "values": [
             "off",
             "herdr",
             "terminal",
-            "system"
+            "system",
+            "all"
           ]
         },
         {
@@ -1175,6 +1176,12 @@
           "type": "boolean",
           "default": "true",
           "description": "Play sounds when agents change state in background workspaces."
+        },
+        {
+          "key": "ui.sound.visual_bell",
+          "type": "boolean",
+          "default": "unset",
+          "description": "Legacy visual-bell toggle. New configs should use ui.bell.visual_bell; this key still enables the visual bell for backward compatibility."
         },
         {
           "key": "ui.sound.path",
@@ -1435,6 +1442,18 @@
             "on",
             "off"
           ]
+        }
+      ]
+    },
+    {
+      "id": "bell",
+      "title": "Bell",
+      "keys": [
+        {
+          "key": "ui.bell.visual_bell",
+          "type": "boolean",
+          "default": "false",
+          "description": "Flash the screen with the terminal visual bell (BEL) when notifications arrive."
         }
       ]
     },

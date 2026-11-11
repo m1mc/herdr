@@ -560,6 +560,10 @@ pub(super) fn is_ssh_session() -> bool {
         || std::env::var_os("LC_ROOTSHELL_PANE").is_some()
 }
 
+pub(crate) fn is_remote_or_ssh_session() -> bool {
+    is_ssh_session() || super::handshake::is_remote_client_process()
+}
+
 #[cfg(any(windows, test))]
 pub(super) fn windows_virtual_terminal_input_mode(mode: u32) -> u32 {
     mode | 0x0200
