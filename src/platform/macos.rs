@@ -554,39 +554,8 @@ pub fn foreground_process_group_id_for_tty_fd(fd: RawFd) -> Option<u32> {
 /// This is the macOS equivalent of reading `/proc/{pid}/cmdline` on Linux.
 /// It reflects runtime title changes like Node.js `process.title = "pi"`.
 fn process_argv0_name(pid: u32) -> Option<String> {
-    let buf = kern_procargs2(pid)?;
-
-    // Layout: [argc: i32] [exec_path\0] [padding\0...] [argv[0]\0] [argv[1]\0] ...
-    if buf.len() < 4 {
-        return None;
-    }
-
-    let argc = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    if argc < 1 {
-        return None;
-    }
-
-    // Skip past exec_path and null padding to reach argv[0]
-    let rest = &buf[4..];
-    let exec_end = rest.iter().position(|&b| b == 0)?;
-    let mut pos = exec_end;
-    while pos < rest.len() && rest[pos] == 0 {
-        pos += 1;
-    }
-    if pos >= rest.len() {
-        return None;
-    }
-
-    // Read argv[0]
-    let argv0_end = rest[pos..]
-        .iter()
-        .position(|&b| b == 0)
-        .unwrap_or(rest.len() - pos);
-    let argv0 = std::str::from_utf8(&rest[pos..pos + argv0_end]).ok()?;
-
-    if argv0.is_empty() {
-        return None;
-    }
+    let argv = process_argv(pid)?;
+    let argv0 = argv.first()?;
 
     // Return basename (argv[0] may be a full path like "/usr/bin/node")
     let basename = Path::new(argv0).file_name()?.to_str()?;
@@ -1011,12 +980,29 @@ pub fn process_agent_hint(pid: u32) -> Option<crate::detect::Agent> {
 }
 
 fn procargs2_argv_start(rest: &[u8]) -> Option<usize> {
+    // argv storage may have been overwritten (e.g. setproctitle on older
+    // macOS). Never interpret an environment assignment as argv[0].
     let exec_end = rest.iter().position(|&byte| byte == 0)?;
     let mut pos = exec_end;
     while pos < rest.len() && rest[pos] == 0 {
         pos += 1;
     }
-    (pos < rest.len()).then_some(pos)
+    let first = rest.get(pos..)?.split(|&byte| byte == 0).next()?;
+    if first.is_empty() {
+        return None;
+    }
+    if let Some(eq) = first.iter().position(|&byte| byte == b'=') {
+        let key = &first[..eq];
+        if !key.is_empty()
+            && (key[0].is_ascii_alphabetic() || key[0] == b'_')
+            && key
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return None;
+        }
+    }
+    Some(pos)
 }
 
 fn skip_nul_strings(bytes: &[u8], start: usize, count: usize) -> Option<usize> {
@@ -1258,6 +1244,15 @@ mod tests {
         assert_eq!(argv, vec!["node", "/Users/can/.local/bin/pi"]);
         assert_eq!(argv.join(" "), "node /Users/can/.local/bin/pi");
         assert!(!argv.join(" ").contains("codex.system"));
+    }
+
+    #[test]
+    fn procargs2_rejects_environment_when_process_arguments_are_overwritten() {
+        // Observed on macOS 10.13: argc survives, but the executable/argv
+        // area contains the tail of PATH followed by the environment.
+        let mut buf = 1_i32.to_ne_bytes().to_vec();
+        buf.extend_from_slice(b"/bin:/usr/bin\0XDG_CONFIG_HOME=/tmp/config\0HERDR_AGENT=codex\0");
+        assert_eq!(procargs2_argv(&buf), None);
     }
 
     #[test]
