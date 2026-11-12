@@ -1815,15 +1815,17 @@ async fn run_client_loop(
                                     .flatten();
                                 (effects, frame)
                             };
+                            // Present first: the visual bell frame must reach the terminal
+                            // before any notification side effect can delay the loop.
+                            if let Some(frame) = frame {
+                                state.present_frame(frame);
+                            }
                             handle_shell_notification_effects(
                                 effects,
                                 &state.sound_config,
                                 #[cfg(windows)]
                                 &event_tx,
                             );
-                            if let Some(frame) = frame {
-                                state.present_frame(frame);
-                            }
                         }
                     }
                     ServerMessage::ClientShellError { message } => {
@@ -2334,13 +2336,9 @@ async fn run_client_loop(
                             .flatten();
                         (effects, outcome, frame)
                     };
-                    handle_shell_notification_effects(
-                        effects,
-                        &state.sound_config,
-                        #[cfg(windows)]
-                        &event_tx,
-                    );
-                    if finish_client_shell_input(
+                    // Present first: the visual bell frame must reach the terminal
+                    // before any notification side effect can delay the loop.
+                    let exit = finish_client_shell_input(
                         &mut state,
                         outcome,
                         frame,
@@ -2349,7 +2347,14 @@ async fn run_client_loop(
                         &mut endpoint_commands,
                         &mut prefix_input_source,
                         &mut scheduled_activation,
-                    )? {
+                    )?;
+                    handle_shell_notification_effects(
+                        effects,
+                        &state.sound_config,
+                        #[cfg(windows)]
+                        &event_tx,
+                    );
+                    if exit {
                         return Ok(());
                     }
                 }

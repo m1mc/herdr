@@ -98,14 +98,22 @@ pub(super) fn handle_shell_notification_effects(
                     ssh_system_info = Some((title, body));
                 } else {
                     #[cfg(windows)]
-                    let result =
-                        show_system_notification(&title, body.as_deref(), target, event_tx);
-                    #[cfg(not(windows))]
-                    let result =
-                        crate::platform::show_desktop_notification(&title, body.as_deref());
-                    if let Err(err) = result {
+                    if let Err(err) =
+                        show_system_notification(&title, body.as_deref(), target, event_tx)
+                    {
                         warn!(err = %err, "failed to emit system notification");
                     }
+                    // Desktop notifiers run external commands that can take hundreds of
+                    // milliseconds; keep them off the client loop so frames (including the
+                    // visual bell) and input are never stalled behind them.
+                    #[cfg(not(windows))]
+                    std::thread::spawn(move || {
+                        if let Err(err) =
+                            crate::platform::show_desktop_notification(&title, body.as_deref())
+                        {
+                            warn!(err = %err, "failed to emit system notification");
+                        }
+                    });
                 }
             }
         }
