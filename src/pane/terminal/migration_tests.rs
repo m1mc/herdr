@@ -283,16 +283,31 @@ fn mixed_reflow_reads_are_stable_and_chunk_independent() {
     for chunk in MIXED.as_bytes().chunks(3) {
         fragmented.write(chunk);
     }
-    for (width, height) in [(12, 5), (8, 4), (17, 6), (9, 5), (12, 5)] {
+    for (step, (width, height)) in [(12, 5), (8, 4), (17, 6), (9, 5), (12, 5)]
+        .into_iter()
+        .enumerate()
+    {
         whole.resize(width, height);
         fragmented.resize(width, height);
         let expected = whole.observe();
         assert_eq!(whole.observe(), expected, "reads must not mutate semantics");
         assert_eq!(fragmented.observe(), expected);
-        assert!(
-            !expected.links.is_empty(),
-            "fixture must retain a visible link"
-        );
+        // Windows never pulls scrollback back down on a taller resize (ConPTY
+        // semantics, vendor/patches/libghostty-vt/0009), so after the first shrink
+        // the linked row may stay in scrollback; stability above still applies.
+        #[cfg(windows)]
+        let must_show_link = step == 0;
+        #[cfg(not(windows))]
+        let must_show_link = {
+            let _ = step;
+            true
+        };
+        if must_show_link {
+            assert!(
+                !expected.links.is_empty(),
+                "fixture must retain a visible link"
+            );
+        }
     }
 }
 

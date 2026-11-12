@@ -7116,12 +7116,26 @@ mod tests {
         pane.set_scroll_offset_from_bottom(1);
         pane.resize(5, 10, 0, 0);
         let resized = pane.scroll_metrics().expect("scroll metrics after resize");
+        // Unix pulls scrollback back into the taller viewport, which removes it and
+        // makes the scroll offset meaningless, so live follow is restored. ConPTY never
+        // pulls scrollback down: it grows blank rows at the bottom, so the vendored
+        // PageList keeps those rows on Windows (vendor/patches/libghostty-vt/0009) and
+        // the user's scroll position stays valid and is kept, as for any scrolled pane.
+        #[cfg(not(windows))]
         assert_eq!(resized.max_offset_from_bottom, 0);
+        #[cfg(windows)]
+        assert_eq!(resized.max_offset_from_bottom, 2);
 
         pane.process_pty_bytes(pane_id, 0, b"\r\n000005\r\n000006", &tx);
 
         let metrics = pane.scroll_metrics().expect("scroll metrics after output");
+        #[cfg(not(windows))]
         assert_eq!(metrics.offset_from_bottom, 0);
+        #[cfg(windows)]
+        {
+            assert_eq!(metrics.offset_from_bottom, 1);
+            pane.set_scroll_offset_from_bottom(0);
+        }
         assert!(pane.visible_text().contains("000006"));
     }
 
