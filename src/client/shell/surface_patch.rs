@@ -72,6 +72,10 @@ fn fast_path_blocker(
         Some("client_surface_patch.fallback.notification")
     } else if state.copy_feedback.is_some() {
         Some("client_surface_patch.fallback.copy_feedback")
+    } else if state.visual_bell_until.is_some() {
+        // The visual bell inverts the whole composed frame. Raw patch rows would
+        // repaint pane cells uninverted and erase the flash mid-window.
+        Some("client_surface_patch.fallback.visual_bell")
     } else if state.link_hover_blocks_patch(patch) {
         Some("client_surface_patch.fallback.link_hover")
     } else if state.selection.is_some() {

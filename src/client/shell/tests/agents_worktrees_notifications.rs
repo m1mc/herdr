@@ -1682,3 +1682,92 @@ fn semantic_notifications_use_client_policy_and_stable_navigation_targets() {
     assert!(state.visible_notification.is_none());
     assert_eq!(state.pending_notifications.len(), 1);
 }
+
+#[test]
+fn visual_bell_inverts_composed_frame_for_60ms() {
+    fn reversed_cells(frame: &FrameData) -> usize {
+        frame
+            .cells
+            .iter()
+            .filter(|cell| cell.modifier & (1 << 6) != 0)
+            .count()
+    }
+
+    let mut config = crate::config::Config::default();
+    config.ui.bell.visual_bell = true;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    let baseline = state.compose(100, 28).unwrap();
+    let baseline_reversed = reversed_cells(&baseline.frame);
+
+    let now = std::time::Instant::now();
+    let (effects, repaint) = state.receive_notification(
+        &ClientEndpointId::Local,
+        SemanticNotification {
+            kind: SemanticNotificationKind::Custom,
+            title: "flash".into(),
+            body: None,
+            sound: Some(SemanticNotificationSound::Request),
+            agent: None,
+            workspace_id: Some("ws_2".into()),
+            tab_id: Some("tab_2".into()),
+            pane_id: Some("pane_2".into()),
+            position: None,
+        },
+        now,
+    );
+    assert!(repaint);
+    assert!(effects
+        .iter()
+        .any(|effect| matches!(effect, ClientShellNotificationEffect::VisualBell)));
+
+    let flashed = state.compose(100, 28).unwrap();
+    assert!(
+        reversed_cells(&flashed.frame) > baseline_reversed,
+        "visual bell must invert visible frame cells"
+    );
+    let encoder = crate::protocol::render_ansi::BlitEncoder::new();
+    let encoded = encoder.encode(&flashed.frame, true);
+    assert!(
+        String::from_utf8_lossy(&encoded.bytes).contains(";7;"),
+        "visual bell frame must emit reverse-video SGR"
+    );
+
+    assert!(state.tick_visual_bell(now + std::time::Duration::from_millis(61)));
+    let restored = state.compose(100, 28).unwrap();
+    assert_eq!(reversed_cells(&restored.frame), baseline_reversed);
+}
+
+#[test]
+fn finished_notification_in_focused_tab_suppresses_visual_bell() {
+    let mut config = crate::config::Config::default();
+    config.ui.bell.visual_bell = true;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    let now = std::time::Instant::now();
+    let (effects, _) = state.receive_notification(
+        &ClientEndpointId::Local,
+        SemanticNotification {
+            kind: SemanticNotificationKind::Finished,
+            title: "done".into(),
+            body: None,
+            sound: Some(SemanticNotificationSound::Done),
+            agent: Some("agy".into()),
+            workspace_id: Some("ws_1".into()),
+            tab_id: Some("tab_1".into()),
+            pane_id: Some("pane_1".into()),
+            position: None,
+        },
+        now,
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, ClientShellNotificationEffect::VisualBell)),
+        "focused-tab completion notifications intentionally suppress the visual bell"
+    );
+}
