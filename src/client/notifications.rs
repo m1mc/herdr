@@ -40,6 +40,42 @@ fn queue_system_notification(
     Ok(true)
 }
 
+#[cfg(not(windows))]
+type DesktopNotification = (String, Option<String>);
+
+/// Hands desktop notifications to one long-lived worker so their external notifier
+/// commands (often hundreds of milliseconds each) never stall the client loop, run in
+/// arrival order, and cannot pile up unbounded behind a slow notifier.
+#[cfg(not(windows))]
+fn queue_desktop_notification(title: String, body: Option<String>) {
+    const QUEUE_DEPTH: usize = 16;
+    static QUEUE: std::sync::OnceLock<Option<std::sync::mpsc::SyncSender<DesktopNotification>>> =
+        std::sync::OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<DesktopNotification>(QUEUE_DEPTH);
+        std::thread::Builder::new()
+            .name("herdr-desktop-notify".into())
+            .spawn(move || {
+                for (title, body) in receiver {
+                    if let Err(err) =
+                        crate::platform::show_desktop_notification(&title, body.as_deref())
+                    {
+                        warn!(err = %err, "failed to emit system notification");
+                    }
+                }
+            })
+            .map_err(|err| warn!(err = %err, "failed to start desktop notification worker"))
+            .ok()
+            .map(|_| sender)
+    });
+    let Some(sender) = queue else {
+        return;
+    };
+    if let Err(err) = sender.try_send((title, body)) {
+        warn!(err = %err, "dropped system notification; notifier queue is full or closed");
+    }
+}
+
 #[cfg(windows)]
 fn show_untargeted_system_notification(title: &str, body: Option<&str>) -> io::Result<bool> {
     let title = title.to_owned();
@@ -103,17 +139,10 @@ pub(super) fn handle_shell_notification_effects(
                     {
                         warn!(err = %err, "failed to emit system notification");
                     }
-                    // Desktop notifiers run external commands that can take hundreds of
-                    // milliseconds; keep them off the client loop so frames (including the
-                    // visual bell) and input are never stalled behind them.
+                    // Keep notifier commands off the client loop so frames (including
+                    // the visual bell) and input are never stalled behind them.
                     #[cfg(not(windows))]
-                    std::thread::spawn(move || {
-                        if let Err(err) =
-                            crate::platform::show_desktop_notification(&title, body.as_deref())
-                        {
-                            warn!(err = %err, "failed to emit system notification");
-                        }
-                    });
+                    queue_desktop_notification(title, body);
                 }
             }
         }

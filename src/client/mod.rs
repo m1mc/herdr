@@ -2338,7 +2338,7 @@ async fn run_client_loop(
                     };
                     // Present first: the visual bell frame must reach the terminal
                     // before any notification side effect can delay the loop.
-                    let exit = finish_client_shell_input(
+                    let finished = finish_client_shell_input(
                         &mut state,
                         outcome,
                         frame,
@@ -2347,14 +2347,15 @@ async fn run_client_loop(
                         &mut endpoint_commands,
                         &mut prefix_input_source,
                         &mut scheduled_activation,
-                    )?;
+                    );
+                    // Deliver this tick's alerts even if finishing the input failed.
                     handle_shell_notification_effects(
                         effects,
                         &state.sound_config,
                         #[cfg(windows)]
                         &event_tx,
                     );
-                    if exit {
+                    if finished? {
                         return Ok(());
                     }
                 }
