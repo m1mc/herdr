@@ -1275,6 +1275,14 @@ impl UiConfig {
         self.bell.visual_bell || self.sound.visual_bell.unwrap_or(false)
     }
 
+    /// Sound settings for a client, carrying the effective visual bell so client paths
+    /// that only receive `SoundConfig` honor `[ui.bell]`, not just the legacy key.
+    pub fn client_sound_config(&self) -> SoundConfig {
+        let mut sound = self.sound.clone();
+        sound.visual_bell = Some(self.visual_bell_enabled());
+        sound
+    }
+
     pub fn mouse_scroll_lines(&self) -> usize {
         self.mouse_scroll_lines
             .map(NonZeroUsize::get)

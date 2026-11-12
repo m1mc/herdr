@@ -113,7 +113,7 @@ pub(super) fn reload_local_client_config(
                 for diagnostic in loaded.config.ui.sound.diagnostics() {
                     warn!(diagnostic = %diagnostic, "local sound config diagnostic");
                 }
-                *sound_config = loaded.config.ui.sound.clone();
+                *sound_config = loaded.config.ui.client_sound_config();
                 *redraw_on_focus_gained = loaded.config.ui.redraw_on_focus_gained;
                 *draw_host_cursor = should_draw_host_cursor(loaded.config.ui.host_cursor);
                 *mouse_capture = loaded.config.ui.mouse_capture;

@@ -114,8 +114,13 @@ pub(super) fn handle_shell_notification_effects(
                 }
             }
             shell::ClientShellNotificationEffect::VisualBell => {
-                if let Err(err) = crate::terminal_effects::write_visual_bell(&mut io::stdout()) {
-                    warn!(err = %err, "failed to emit visual bell");
+                // The shell already inverts its composed frame for 60 ms; toggling the
+                // outer terminal's reverse video (DECSCNM) as well could cancel that flash
+                // or add a second one, so only ring the terminal bell here.
+                if let Err(err) =
+                    crate::terminal_effects::write_terminal_bells(&mut io::stdout(), 1)
+                {
+                    warn!(err = %err, "failed to emit terminal bell");
                 }
             }
             shell::ClientShellNotificationEffect::Terminal { title, body } => {

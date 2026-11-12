@@ -297,6 +297,16 @@ path = "sounds/notification.wav"
     }
 
     #[test]
+    fn client_sound_config_carries_effective_visual_bell() {
+        let bell: Config = toml::from_str("[ui.bell]\nvisual_bell = true\n").unwrap();
+        assert_eq!(bell.ui.client_sound_config().visual_bell, Some(true));
+        assert_eq!(bell.ui.sound.visual_bell, None, "raw table stays untouched");
+
+        let off = Config::default();
+        assert_eq!(off.ui.client_sound_config().visual_bell, Some(false));
+    }
+
+    #[test]
     fn bell_table_config_parses_visual_bell() {
         let config: Config = toml::from_str(
             r#"

@@ -214,7 +214,7 @@ fn run_client_with_mode(
         .as_ref()
         .is_some_and(shell::ClientShellConfig::uses_endpoint_keybindings);
     let mut loop_config = ClientLoopConfig {
-        sound_config: loaded_config.config.ui.sound,
+        sound_config: loaded_config.config.ui.client_sound_config(),
         mouse_scroll_lines,
         redraw_on_focus_gained,
         host_cursor,
