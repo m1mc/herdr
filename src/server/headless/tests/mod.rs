@@ -5043,6 +5043,7 @@ fn windows_shutdown_probe_preserves_panes_and_agent_sessions() {
                     },
                     respond_to,
                     response_write_complete: None,
+                    control: None,
                 });
                 let response: api::schema::ErrorResponse =
                     serde_json::from_str(&response_rx.recv().unwrap()).unwrap();

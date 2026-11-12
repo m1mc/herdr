@@ -46,7 +46,7 @@ use self::background_agent::{AgentJobStatus, AgentJobTracker};
 use self::raw_stream::{RawInputSink, RawTapBudget, RawTapRegistry};
 #[cfg(test)]
 pub(crate) use self::terminal::test_encode_key_for_app;
-#[cfg(any(unix, test))]
+#[cfg(unix)]
 pub use self::terminal::InputState;
 use self::terminal::{GhosttyPaneTerminal, PaneTerminal};
 pub(crate) use self::terminal::{
