@@ -1,0 +1,141 @@
+diff --git a/vendor/libghostty-vt/src/terminal/PageList.zig b/vendor/libghostty-vt/src/terminal/PageList.zig
+index 94ef9bb0..1cb94af7 100644
+--- a/vendor/libghostty-vt/src/terminal/PageList.zig
++++ b/vendor/libghostty-vt/src/terminal/PageList.zig
+@@ -1296,7 +1296,18 @@ pub fn resize(self: *PageList, opts: Resize) Allocator.Error!void {
+             // We grow rows after cols so that we can do our unwrapping/reflow
+             // before we do a no-reflow grow.
+             try self.resizeCols(cols, opts.cursor);
+-            try self.resizeWithoutReflow(opts);
++            try self.resizeWithoutReflow(opts: {
++                var copy = opts;
++                if (copy.cursor) |*c| {
++                    if (c.pin) |cursor_pin| {
++                        if (self.pointFromPin(.active, cursor_pin.*)) |pt| {
++                            c.x = @intCast(pt.active.x);
++                            c.y = @intCast(pt.active.y);
++                        }
++                    }
++                }
++                break :opts copy;
++            });
+         },
+ 
+         .lt => {
+@@ -1307,7 +1318,17 @@ pub fn resize(self: *PageList, opts: Resize) Allocator.Error!void {
+                 copy.cols = self.cols;
+                 break :opts copy;
+             });
+-            try self.resizeCols(cols, opts.cursor);
++            const cursor: ?Resize.Cursor = if (opts.cursor) |c| cursor: {
++                var copy = c;
++                if (copy.pin) |cursor_pin| {
++                    if (self.pointFromPin(.active, cursor_pin.*)) |pt| {
++                        copy.x = @intCast(pt.active.x);
++                        copy.y = @intCast(pt.active.y);
++                    }
++                }
++                break :cursor copy;
++            } else null;
++            try self.resizeCols(cols, cursor);
+         },
+     }
+ 
+@@ -1344,6 +1365,7 @@ fn resizeCols(
+     const preserved_cursor: ?struct {
+         tracked_pin: *Pin,
+         untrack: bool,
++        tracked_active_pin: ?*Pin,
+         remaining_rows: usize,
+         wrapped_rows: usize,
+     } = if (cursor) |c| cursor: {
+@@ -1379,14 +1401,27 @@ fn resizeCols(
+             break :wrapped wrapped;
+         };
+ 
++        const tracked_pin = c.pin orelse try self.trackPin(p);
++        errdefer if (c.pin == null) self.untrackPin(tracked_pin);
++
++        const tracked_active_pin: ?*Pin = if (comptime builtin.os.tag == .windows)
++            if (active_pin) |ap|
++                if (!p.before(ap)) try self.trackPin(ap) else null
++            else
++                null
++        else
++            null;
++
+         break :cursor .{
+-            .tracked_pin = c.pin orelse try self.trackPin(p),
++            .tracked_pin = tracked_pin,
+             .untrack = c.pin == null,
++            .tracked_active_pin = tracked_active_pin,
+             .remaining_rows = self.rows -| (c.y + 1),
+             .wrapped_rows = wrapped,
+         };
+     } else null;
+     defer if (preserved_cursor) |c| {
++        if (c.tracked_active_pin) |ap| self.untrackPin(ap);
+         if (c.untrack) self.untrackPin(c.tracked_pin);
+     };
+ 
+@@ -1516,6 +1551,10 @@ fn resizeCols(
+         ) orelse break :cursor;
+ 
+         const active_pin = self.pin(.{ .active = .{} });
++        const stop_pin: ?Pin = if (comptime builtin.os.tag == .windows)
++            if (c.tracked_active_pin) |ap| ap.* else active_pin
++        else
++            active_pin;
+ 
+         // We need to determine how many rows we wrapped from the original
+         // and subtract that from the remaining rows we expect because if
+@@ -1524,7 +1563,11 @@ fn resizeCols(
+         const wrapped = wrapped: {
+             var wrapped: usize = 0;
+ 
+-            var row_it = c.tracked_pin.rowIterator(.left_up, active_pin);
++            if (stop_pin) |sp| {
++                if (c.tracked_pin.before(sp)) break :wrapped 0;
++            }
++
++            var row_it = c.tracked_pin.rowIterator(.left_up, stop_pin);
+             while (row_it.next()) |next| {
+                 const row = next.rowAndCell().row;
+                 if (row.wrap_continuation) wrapped += 1;
+@@ -1536,6 +1579,9 @@ fn resizeCols(
+         const current = self.rows -| (active_pt.active.y + 1);
+ 
+         var req_rows = c.remaining_rows;
++        if (comptime builtin.os.tag == .windows) {
++            req_rows += c.wrapped_rows -| wrapped;
++        }
+         req_rows -|= wrapped -| c.wrapped_rows;
+         req_rows -|= current;
+ 
+@@ -2856,14 +2902,20 @@ fn resizeWithoutReflow(self: *PageList, opts: Resize) Allocator.Error!void {
+                 // In other words, we don't want to "pull down" scrollback.
+                 // This is purely a UX feature.
+                 if (opts.cursor) |cursor| cursor: {
+-                    if (cursor.y >= self.rows - 1) break :cursor;
++                    if (comptime builtin.os.tag != .windows) {
++                        if (cursor.y >= self.rows - 1) break :cursor;
++                    }
+ 
+-                    // Cursor is not at the bottom, so we just grow our
+-                    // rows and we're done. Cursor does NOT change for this
+-                    // since we're not pulling down scrollback.
++                    // Cursor is not at the bottom (or on Windows where ConPTY
++                    // has no scrollback and always grows blank rows at the
++                    // bottom), so we just grow our rows and we're done.
++                    // Cursor does NOT change for this since we're not pulling
++                    // down scrollback.
+                     const delta = rows - self.rows;
+-                    self.rows = rows;
+-                    for (0..delta) |_| _ = try self.grow();
++                    for (0..delta) |_| {
++                        self.rows += 1;
++                        _ = try self.grow();
++                    }
+                     break :gt;
+                 }
+ 

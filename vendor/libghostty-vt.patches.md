@@ -308,3 +308,46 @@ cd ../..
 just test-one raw_snapshot
 python3 -m unittest scripts.test_vendor_libghostty_vt
 ```
+
+## 0009 follow ConPTY semantics when resizing on Windows
+
+status: active
+
+patch: `vendor/patches/libghostty-vt/0009-windows-conpty-resize-semantics.patch`
+
+herdr issue: none; introduced by the local fork commit `18031636` (native
+aarch64 Windows support and ConPTY resize cursor drift)
+
+upstream discussion: not opened
+
+upstream pr: not opened
+
+vendored base: `44f2a44df7e8c4a0c6df3f7d872ef3d7ead88e51`
+
+local files:
+
+- `vendor/libghostty-vt/src/terminal/PageList.zig`
+
+reason: ConPTY keeps no scrollback and always grows blank rows at the bottom
+when a pane gets taller. Pulling scrollback back into the viewport, as
+libghostty does on other platforms, made the model diverge from ConPTY's
+repaint and drifted the cursor after resizes. On Windows the PageList now
+grows blank rows instead of pulling scrollback, and column reflow tracks the
+active area so wrapped rows are not double-counted. All targets also resolve
+the resize cursor from its tracked pin before reflowing. This was committed
+directly to the vendored tree; this entry records it so updates keep it.
+
+remove when: upstream libghostty offers ConPTY-compatible resize behavior (or
+herdr stops hosting ConPTY), and the Windows resize tests below pass without
+this patch.
+
+verification (Zig 0.16.0; set ZIG to that executable for Rust builds):
+
+```sh
+just test-one resize_that_removes_scrollback_restores_live_follow
+just test-one mixed_reflow_reads_are_stable_and_chunk_independent
+python3 -m unittest scripts.test_vendor_libghostty_vt
+```
+
+Run the Rust tests on both a Unix host and Windows: the Windows assertions
+cover the ConPTY semantics, the Unix ones the upstream pull-down behavior.
