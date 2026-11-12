@@ -2560,6 +2560,71 @@ mod tests {
     }
 
     #[test]
+    fn pane_rename_emits_pane_renamed_only_when_label_changes() {
+        let mut app = test_app();
+        let workspace = Workspace::test_new("api-pane-renamed-event");
+        let pane = workspace.tabs[0].root_pane;
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+        let workspace_id = app.public_workspace_id(0);
+
+        let mut rename = |label: Option<&str>| {
+            let response = app.handle_api_request(crate::api::schema::Request {
+                id: "req_pane_renamed_event".into(),
+                method: crate::api::schema::Method::PaneRename(
+                    crate::api::schema::PaneRenameParams {
+                        pane_id: pane_id.clone(),
+                        label: label.map(Into::into),
+                    },
+                ),
+            });
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["result"]["type"], "pane_info");
+        };
+        rename(Some(" reviewer "));
+        rename(Some("reviewer"));
+        rename(Some("notes"));
+        rename(None);
+        rename(Some("   "));
+
+        let renamed = app
+            .event_hub
+            .events_after(0)
+            .into_iter()
+            .filter_map(|(_, event)| match event.data {
+                crate::api::schema::EventData::PaneRenamed {
+                    pane_id,
+                    workspace_id,
+                    label,
+                } => {
+                    assert_eq!(event.event, crate::api::schema::EventKind::PaneRenamed);
+                    Some((pane_id, workspace_id, label))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            renamed,
+            vec![
+                (
+                    pane_id.clone(),
+                    workspace_id.clone(),
+                    Some("reviewer".to_string())
+                ),
+                (
+                    pane_id.clone(),
+                    workspace_id.clone(),
+                    Some("notes".to_string())
+                ),
+                (pane_id, workspace_id, None),
+            ]
+        );
+    }
+
+    #[test]
     fn terminal_and_agent_targets_treat_terminal_ids_differently() {
         let mut app = test_app();
         let workspace = Workspace::test_new("terminal-target-id");

@@ -152,6 +152,7 @@ impl ActiveSubscription {
             Subscription::PaneCreated {} => Ok(event_subscription(EventKind::PaneCreated)),
             Subscription::PaneClosed {} => Ok(event_subscription(EventKind::PaneClosed)),
             Subscription::PaneUpdated {} => Ok(event_subscription(EventKind::PaneUpdated)),
+            Subscription::PaneRenamed {} => Ok(event_subscription(EventKind::PaneRenamed)),
             Subscription::PaneFocused {} => Ok(event_subscription(EventKind::PaneFocused)),
             Subscription::PaneMoved {} => Ok(event_subscription(EventKind::PaneMoved)),
             Subscription::PaneExited {} => Ok(event_subscription(EventKind::PaneExited)),

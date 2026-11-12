@@ -1499,11 +1499,29 @@ impl App {
         let Some(terminal) = self.state.terminals.get_mut(&terminal_id) else {
             return pane_not_found(id, &params.pane_id);
         };
+        let previous_label = terminal.manual_label.clone();
         match params.label.map(|label| label.trim().to_string()) {
             Some(label) if !label.is_empty() => terminal.set_manual_label(label),
             _ => terminal.clear_manual_label(),
         }
+        let label = terminal.manual_label.clone();
         self.state.mark_session_dirty();
+        // Unchanged labels stay silent so a hook that reapplies the current
+        // label cannot re-trigger itself.
+        if label != previous_label {
+            let workspace_id = self.public_workspace_id(ws_idx);
+            if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
+                crate::logging::pane_renamed(&workspace_id, &public_pane_id);
+                self.emit_event(EventEnvelope {
+                    event: EventKind::PaneRenamed,
+                    data: EventData::PaneRenamed {
+                        pane_id: public_pane_id,
+                        workspace_id,
+                        label,
+                    },
+                });
+            }
+        }
         let pane = self.pane_info(ws_idx, pane_id).unwrap();
 
         encode_success(id, ResponseResult::PaneInfo { pane })

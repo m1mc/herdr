@@ -833,9 +833,12 @@ Tab event subscriptions include `tab.created`, `tab.closed`, `tab.focused`,
 `tab.renamed`, and `tab.moved`. `tab.moved` includes the moved `tab_id`,
 `workspace_id`, requested `insert_index`, and updated ordered `tabs` list for
 that workspace.
-Pane event subscriptions include `pane.created`, `pane.updated`, `pane.closed`, `pane.focused`,
+Pane event subscriptions include `pane.created`, `pane.updated`, `pane.renamed`, `pane.closed`, `pane.focused`,
 `pane.moved`, `pane.exited`, `pane.agent_detected`,
 `pane.output_matched`, `pane.agent_status_changed`, and `pane.scroll_changed`.
+`pane.renamed` emits `pane_id`, `workspace_id`, and the new `label` whenever
+`pane.rename` changes a pane's manual label. `label` is omitted when the rename
+cleared it, and renaming a pane to its current label does not emit the event.
 `pane.focused` also reports manual pane selection changes from any client attached
 to this server. It does not move other clients' views, and its payload does not
 identify the client. Selecting an already-selected pane does not emit it again.

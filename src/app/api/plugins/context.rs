@@ -163,6 +163,11 @@ impl App {
                 pane_id,
                 workspace_id,
             }
+            | EventData::PaneRenamed {
+                pane_id,
+                workspace_id,
+                ..
+            }
             | EventData::PaneOutputChanged {
                 pane_id,
                 workspace_id,

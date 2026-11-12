@@ -3083,6 +3083,78 @@ command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}"]
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn pane_rename_runs_pane_renamed_hooks_with_pane_context() {
+        let mut app = test_app();
+        app.state.workspaces = vec![crate::workspace::Workspace::test_new("pane-renamed-hook")];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        let pane = app.state.workspaces[0].tabs[0].root_pane;
+        let pane_id = app.pane_info(0, pane).unwrap().pane_id;
+        let workspace_id = app.public_workspace_id(0);
+
+        let root = unique_temp_path("plugin-pane-renamed");
+        let context_capture = root.join("context.json");
+        let event_capture = root.join("event.json");
+        write_manifest_content(
+            &root,
+            &format!(
+                r#"
+id = "example.pane-renamed"
+name = "Pane Renamed"
+version = "0.1.0"
+min_herdr_version = "0.6.10"
+platforms = ["linux", "macos"]
+
+[[events]]
+on = "pane.renamed"
+command = ["sh", "-c", "printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" > {}; printf '%s' \"$HERDR_PLUGIN_EVENT_JSON\" > {}"]
+"#,
+                context_capture.display(),
+                event_capture.display()
+            ),
+        );
+        link_manifest(&mut app, &root);
+        let plugin = app
+            .state
+            .installed_plugins
+            .get("example.pane-renamed")
+            .unwrap();
+        assert!(
+            plugin.warnings.is_empty(),
+            "pane.renamed must be a known hook event: {:?}",
+            plugin.warnings
+        );
+
+        let response = app.handle_api_request(Request {
+            id: "rename".into(),
+            method: Method::PaneRename(crate::api::schema::PaneRenameParams {
+                pane_id: pane_id.clone(),
+                label: Some("herdr notify".into()),
+            }),
+        });
+        assert!(response.contains("pane_info"), "{response}");
+
+        let event: serde_json::Value =
+            serde_json::from_str(&read_capture_when_ready(&event_capture, || {
+                app.drain_all_internal_events();
+            }))
+            .unwrap();
+        assert_eq!(event["data"]["type"], "pane_renamed");
+        assert_eq!(event["data"]["pane_id"], pane_id.as_str());
+        assert_eq!(event["data"]["workspace_id"], workspace_id.as_str());
+        assert_eq!(event["data"]["label"], "herdr notify");
+
+        let context: PluginInvocationContext =
+            serde_json::from_str(&std::fs::read_to_string(&context_capture).unwrap()).unwrap();
+        assert_eq!(context.focused_pane_id.as_deref(), Some(pane_id.as_str()));
+        assert_eq!(context.workspace_id.as_deref(), Some(workspace_id.as_str()));
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn plugin_command_limit_rejects_and_logs() {
         let mut app = test_app();
