@@ -1063,7 +1063,7 @@ fn retained_surface_patch_recomposes_while_visual_bell_is_active() {
     state.set_pane_surface(pane_surface);
     state.compose(100, 30).expect("initial composed frame");
     let now = std::time::Instant::now();
-    state.trigger_visual_bell(now);
+    assert!(state.trigger_visual_bell(now));
     let patch = crate::protocol::PaneSurfacePatch {
         boot_id: "boot-1".into(),
         projection_revision: 1,

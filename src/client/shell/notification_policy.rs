@@ -211,9 +211,11 @@ impl ClientShellState {
                     });
                 }
             }
-            if self.config.visual_bell_enabled && !suppress_active_target_alert {
+            if self.config.visual_bell_enabled
+                && !suppress_active_target_alert
+                && self.trigger_visual_bell(now)
+            {
                 effects.push(ClientShellNotificationEffect::VisualBell);
-                self.trigger_visual_bell(now);
                 repaint = true;
             }
 

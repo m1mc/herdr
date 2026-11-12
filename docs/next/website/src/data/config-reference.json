@@ -1453,7 +1453,7 @@
           "key": "ui.bell.visual_bell",
           "type": "boolean",
           "default": "false",
-          "description": "Flash the screen with the terminal visual bell (BEL) when notifications arrive."
+          "description": "Briefly invert the Herdr screen for 60 ms when notifications arrive. Each terminal flashes at most once per second; notifications inside that window still play sounds and show toasts."
         }
       ]
     },

@@ -1771,3 +1771,52 @@ fn finished_notification_in_focused_tab_suppresses_visual_bell() {
         "focused-tab completion notifications intentionally suppress the visual bell"
     );
 }
+
+#[test]
+fn visual_bell_cooldown_skips_flash_but_keeps_other_alerts() {
+    fn custom(title: &str) -> SemanticNotification {
+        SemanticNotification {
+            kind: SemanticNotificationKind::Custom,
+            title: title.into(),
+            body: None,
+            sound: Some(SemanticNotificationSound::Request),
+            agent: None,
+            workspace_id: None,
+            tab_id: None,
+            pane_id: None,
+            position: None,
+        }
+    }
+    fn has_bell(effects: &[ClientShellNotificationEffect]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ClientShellNotificationEffect::VisualBell))
+    }
+    fn has_sound(effects: &[ClientShellNotificationEffect]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, ClientShellNotificationEffect::Sound { .. }))
+    }
+
+    let mut config = crate::config::Config::default();
+    config.ui.bell.visual_bell = true;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let start = std::time::Instant::now();
+
+    let (first, _) = state.receive_notification(&ClientEndpointId::Local, custom("a"), start);
+    assert!(has_bell(&first));
+
+    // A burst inside the cooldown still delivers sound but does not flash again.
+    let burst = start + std::time::Duration::from_millis(400);
+    let (second, _) = state.receive_notification(&ClientEndpointId::Local, custom("b"), burst);
+    assert!(!has_bell(&second));
+    assert!(has_sound(&second));
+    assert!(state.tick_visual_bell(start + std::time::Duration::from_millis(61)));
+    assert!(state.visual_bell_until.is_none());
+
+    let later = start + std::time::Duration::from_millis(1000);
+    let (third, _) = state.receive_notification(&ClientEndpointId::Local, custom("c"), later);
+    assert!(has_bell(&third));
+}

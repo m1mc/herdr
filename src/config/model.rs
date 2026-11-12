@@ -1028,7 +1028,7 @@ pub struct UiConfig {
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
-    /// Visual bell (screen flash via ASCII \x07 BEL) on notifications.
+    /// Visual bell: briefly invert the Herdr screen (60 ms, at most once per second) on notifications.
     #[serde(default)]
     pub bell: BellConfig,
     /// Hide unreachable or reconnecting remote hosts in the sidebar. Default: false.

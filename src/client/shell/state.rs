@@ -4,6 +4,8 @@ pub(super) const MIN_TAB_WIDTH: u16 = 8;
 pub(super) const NEW_TAB_WIDTH: u16 = 3;
 pub(super) const WORKSPACE_HEADER_ROWS: u16 = 2;
 const ENDPOINT_ERROR_TIMEOUT_SECS: u64 = 5;
+const VISUAL_BELL_DURATION: std::time::Duration = std::time::Duration::from_millis(60);
+const VISUAL_BELL_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClientShellKeybindingSource {
@@ -966,6 +968,7 @@ pub(crate) struct ClientShellState {
     pub(super) endpoint_error_deadline: Option<std::time::Instant>,
     pub(super) dismissed_product_announcement: Option<(String, String)>,
     pub(super) visual_bell_until: Option<std::time::Instant>,
+    pub(super) last_visual_bell_at: Option<std::time::Instant>,
 }
 
 pub(super) fn product_announcement_state(
@@ -1135,6 +1138,7 @@ impl ClientShellState {
             endpoint_error_deadline: None,
             dismissed_product_announcement: None,
             visual_bell_until: None,
+            last_visual_bell_at: None,
         }
     }
 
@@ -1886,8 +1890,19 @@ impl ClientShellState {
         false
     }
 
-    pub(crate) fn trigger_visual_bell(&mut self, now: std::time::Instant) {
-        self.visual_bell_until = Some(now + std::time::Duration::from_millis(60));
+    /// Starts a visual bell flash unless one started within `VISUAL_BELL_COOLDOWN`.
+    /// Returns whether a flash was started. The cooldown keeps notification bursts
+    /// readable and well below photosensitivity flash-rate limits (WCAG 2.3.1).
+    pub(crate) fn trigger_visual_bell(&mut self, now: std::time::Instant) -> bool {
+        if self
+            .last_visual_bell_at
+            .is_some_and(|last| now.saturating_duration_since(last) < VISUAL_BELL_COOLDOWN)
+        {
+            return false;
+        }
+        self.last_visual_bell_at = Some(now);
+        self.visual_bell_until = Some(now + VISUAL_BELL_DURATION);
+        true
     }
 
     pub(crate) fn tick_visual_bell(&mut self, now: std::time::Instant) -> bool {
