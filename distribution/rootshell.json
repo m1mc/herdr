@@ -1,34 +1,34 @@
 {
-  "version": "0.1.13",
+  "version": "0.1.14",
   "base_version": "0.9.5",
   "protocol": 22,
   "endpoint_generation": 1,
-  "notes": "Rootshell v0.9.5-rootshell.0.1.13\n\nBuilt from 75252c9c387e9f5c7d61969b5870438e65ecfa39.",
+  "notes": "Rootshell v0.9.5-rootshell.0.1.14\n\nBuilt from 5da73818360550a1f634d5f1b0a726feeb7c0ea6.",
   "assets": {
     "linux-x86_64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-linux-x86_64",
-      "sha256": "8e36c54f3d2e806cc8e1618de104d6b074a60219be21851b8a46389284edc9a0"
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-linux-x86_64",
+      "sha256": "3163cb4e124d8c85107a3c87d1dae19c7dbd39b5dba919312248287dffb6bb03"
     },
     "linux-aarch64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-linux-aarch64",
-      "sha256": "3a370e3e3c47aeabb2fe983e5d3881dacd717b58b614f665280e14027a5ebb0c"
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-linux-aarch64",
+      "sha256": "0cf03f2254454d29a2e0dc6fd7ec6629cf5ac5f60d6214a925e4e1f80ea52042"
     },
     "macos-x86_64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-macos-x86_64",
-      "sha256": "82a6428dcc09fa690800acd7915690d613e1b1594a977090639192fe5d4d59ac"
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-macos-x86_64",
+      "sha256": "000b42289da245025360a211713f2cdd1571b19318144a105ea8114dfef854e4"
     },
     "macos-aarch64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-macos-aarch64",
-      "sha256": "ec61a70395bc0da37221e441c307b1a735a7d808f65e34866aa45e3d921fd924"
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-macos-aarch64",
+      "sha256": "3695b5a31289e3d095cc09d43d6288dfed7799077275e22ad0149f07f849c00b"
     },
     "windows-x86_64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-windows-x86_64.zip",
-      "sha256": "80c1133c52921346452c4f12a02f96d1b883b58579b0ae1b167bfa785d87621e",
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-windows-x86_64.zip",
+      "sha256": "607e02584c661dff1e118304b3de11fcc48bd4c77c562951439466c5bb239200",
       "format": "zip"
     },
     "windows-aarch64": {
-      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.13/herdr-windows-aarch64.zip",
-      "sha256": "054d4571f5a67f9174e0d3daa4802d503b3137a6d4046999967f07f26d4ccd87",
+      "url": "https://github.com/m1mc/herdr/releases/download/v0.9.5-rootshell.0.1.14/herdr-windows-aarch64.zip",
+      "sha256": "e0145ec4da70d47a9965b3691e64403e5c2f5c2b92684d0dd87a5ac2df1ceacd",
       "format": "zip"
     }
   }
