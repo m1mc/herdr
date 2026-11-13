@@ -8369,6 +8369,52 @@ fn no_handle_internal_event_bypass_in_module() {
 }
 
 #[test]
+fn notification_show_api_reaches_every_attached_client_shell() {
+    let mut server = test_headless_server();
+    let (client1_tx, client1_control_rx, _client1_rx) = test_client_writer();
+    let (client2_tx, client2_control_rx, _client2_rx) = test_client_writer();
+    for (id, tx) in [(1, client1_tx), (2, client2_tx)] {
+        server.clients.insert(
+            id,
+            ClientConnection::new(
+                (120, 40),
+                crate::kitty_graphics::HostCellSize::default(),
+                id,
+                RenderEncoding::SemanticFrame,
+                Some(tx),
+            ),
+        );
+    }
+    // Single-target routing would pick only the foreground client 2; an explicit
+    // notification show must reach both attached devices.
+    server.foreground_client_id = Some(2);
+
+    let response = server.handle_notification_show_api(
+        "req".into(),
+        api::schema::NotificationShowParams {
+            title: "manual ping".into(),
+            body: None,
+            position: None,
+            sound: api::schema::NotificationShowSound::None,
+            pane_id: None,
+        },
+    );
+    assert!(response.contains("\"shown\":true"), "{response}");
+    for (name, rx) in [
+        ("client 1", &client1_control_rx),
+        ("client 2", &client2_control_rx),
+    ] {
+        let received = rx
+            .recv_timeout(Duration::from_millis(100))
+            .unwrap_or_else(|_| panic!("{name} notification"));
+        match read_server_message(received) {
+            ServerMessage::SemanticNotification(notif) => assert_eq!(notif.title, "manual ping"),
+            other => panic!("expected semantic notification, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn agent_semantic_notification_targets_originating_input_client_only() {
     let mut server = test_headless_server();
     let (client1_tx, client1_control_rx, _client1_rx) = test_client_writer();

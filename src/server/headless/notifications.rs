@@ -329,11 +329,6 @@ impl HeadlessServer {
                 Some(protocol::SemanticNotificationSound::Request)
             }
         };
-        let pane_id = params
-            .pane_id
-            .as_deref()
-            .and_then(|id| self.app.parse_current_public_pane_id(id))
-            .map(|(_, id)| id);
         let notification_msg =
             ServerMessage::SemanticNotification(protocol::SemanticNotification {
                 kind: protocol::SemanticNotificationKind::Custom,
@@ -346,7 +341,10 @@ impl HeadlessServer {
                 pane_id: params.pane_id,
                 position: params.position,
             });
-        let shown = self.dispatch_semantic_notification(pane_id, notification_msg);
+        // An explicit `notification show` is a request from the user, so every attached
+        // client gets it. Only agent lifecycle alerts are narrowed to the device that
+        // last drove the pane, to avoid duplicate pings across devices.
+        let shown = self.send_to_client_shells(notification_msg);
         if shown {
             self.app.mark_api_notification_shown(Instant::now());
         } else {
