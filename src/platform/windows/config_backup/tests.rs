@@ -389,12 +389,16 @@ fn encrypted_config_is_rejected_without_plaintext_backup() {
     let path = dir.0.join("config");
     fs::write(&path, b"encrypted original").unwrap();
     let wide = super::super::extended_length_path(&path).unwrap();
-    assert_ne!(
-        unsafe { EncryptFileW(wide.as_ptr()) },
-        0,
-        "cannot establish EFS fixture: {}",
-        io::Error::last_os_error()
-    );
+    if unsafe { EncryptFileW(wide.as_ptr()) } == 0 {
+        let error = io::Error::last_os_error();
+        if running_in_network_logon() {
+            // EFS needs the user's DPAPI keys, which a key-authenticated network
+            // logon never loads. Run from an interactive session to cover this.
+            eprintln!("skipped: EFS unavailable in a network logon session ({error})");
+            return;
+        }
+        panic!("cannot establish EFS fixture: {error}");
+    }
     assert_ne!(
         fs::metadata(&path).unwrap().file_attributes() & FILE_ATTRIBUTE_ENCRYPTED,
         0
@@ -408,4 +412,15 @@ fn encrypted_config_is_rejected_without_plaintext_backup() {
     assert_eq!(identity(&path), before_id);
     let (complete, pending) = backup_paths(&path);
     assert!(!complete.exists() && !pending.exists());
+}
+
+/// True when this process runs in a network logon session (e.g. OpenSSH with key
+/// auth). Such tokens carry the NETWORK group (S-1-5-2) and have no DPAPI
+/// credentials or interactive integrity profile, so some fixtures cannot be built.
+fn running_in_network_logon() -> bool {
+    std::process::Command::new("whoami")
+        .args(["/groups", "/fo", "csv", "/nh"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("\"S-1-5-2\""))
+        .unwrap_or(false)
 }

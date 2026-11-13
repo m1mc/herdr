@@ -48,6 +48,13 @@ fn connect(path: &Path) -> io::Result<()> {
 
 #[test]
 fn server_integrity_requires_startup_consent_on_both_endpoints() {
+    if running_in_network_logon() {
+        // A network logon token is not a filtered interactive token, so the
+        // elevated/unelevated split this test asserts does not exist. Run it from an
+        // interactive session (it passes there) to cover the consent checks.
+        eprintln!("skipped: integrity levels are not representative in a network logon");
+        return;
+    }
     // Windows integrity SID RIDs and the SE_GROUP_INTEGRITY attribute.
     const LOW: u32 = 0x1000;
     const MEDIUM: u32 = 0x2000;
@@ -259,4 +266,15 @@ fn server_integrity_requires_startup_consent_on_both_endpoints() {
         child.wait().unwrap();
         server.child = None;
     }
+}
+
+/// True when this process runs in a network logon session (e.g. OpenSSH with key
+/// auth). Such tokens carry the NETWORK group (S-1-5-2) and have no DPAPI
+/// credentials or interactive integrity profile, so some fixtures cannot be built.
+fn running_in_network_logon() -> bool {
+    std::process::Command::new("whoami")
+        .args(["/groups", "/fo", "csv", "/nh"])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("\"S-1-5-2\""))
+        .unwrap_or(false)
 }
