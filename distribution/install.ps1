@@ -503,6 +503,39 @@ function Move-DirectoryWithRetry {
     }
 }
 
+function Replace-FileAllowingInUse {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [switch]$HardLink
+    )
+    if (Test-Path -LiteralPath $Destination) {
+        try {
+            Remove-Item -LiteralPath $Destination -Force -ErrorAction Stop
+        } catch {
+            # A running herdr.exe (including the one performing `herdr update`) or a loaded
+            # ConPTY DLL cannot be deleted or overwritten, but Windows allows renaming it.
+            $stale = "{0}.old-{1}" -f (Split-Path -Leaf $Destination), [guid]::NewGuid().ToString("N").Substring(0, 8)
+            Rename-Item -LiteralPath $Destination -NewName $stale -ErrorAction Stop
+        }
+    }
+    if ($HardLink) {
+        try {
+            New-Item -ItemType HardLink -Path $Destination -Target $Source -ErrorAction Stop | Out-Null
+            return
+        } catch {
+        }
+    }
+    Copy-Item -LiteralPath $Source -Destination $Destination -Force -ErrorAction Stop
+}
+
+function Remove-StaleReplacedFiles {
+    param([Parameter(Mandatory = $true)][string]$Directory)
+    # Files renamed aside by Replace-FileAllowingInUse; still-running ones are retried later.
+    Get-ChildItem -LiteralPath $Directory -Recurse -Force -File -Filter "*.old-*" -ErrorAction SilentlyContinue |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+
 function Remove-DirectoryWithRetry {
     param(
         [string]$Path,
@@ -891,18 +924,17 @@ try {
         # Sync ~/.local/bin/herdr.exe HardLink and conpty bundle if ~/.local/bin exists
         $localBinDir = Join-Path $env:USERPROFILE ".local\bin"
         if (Test-Path -LiteralPath $localBinDir) {
-            $localHerdrBin = Join-Path $localBinDir "herdr.exe"
-            Remove-Item -LiteralPath $localHerdrBin -Force -ErrorAction SilentlyContinue
-            try {
-                New-Item -ItemType HardLink -Path $localHerdrBin -Target (Join-Path $releaseDir "herdr.exe") -ErrorAction Stop | Out-Null
-            } catch {
-                Copy-Item -LiteralPath (Join-Path $releaseDir "herdr.exe") -Destination $localHerdrBin -Force -ErrorAction SilentlyContinue
-            }
+            Remove-StaleReplacedFiles -Directory $localBinDir
+            Replace-FileAllowingInUse -Source (Join-Path $releaseDir "herdr.exe") -Destination (Join-Path $localBinDir "herdr.exe") -HardLink
             $srcConpty = Join-Path $releaseDir "conpty"
             $dstConpty = Join-Path $localBinDir "conpty"
             if (Test-Path -LiteralPath $srcConpty) {
-                Remove-Item -LiteralPath $dstConpty -Recurse -Force -ErrorAction SilentlyContinue
-                Copy-Item -LiteralPath $srcConpty -Destination $dstConpty -Recurse -Force -ErrorAction SilentlyContinue
+                $srcConptyRoot = (Get-Item -LiteralPath $srcConpty).FullName.TrimEnd("\")
+                Get-ChildItem -LiteralPath $srcConptyRoot -Recurse -Force -File | ForEach-Object {
+                    $target = Join-Path $dstConpty $_.FullName.Substring($srcConptyRoot.Length).TrimStart("\")
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+                    Replace-FileAllowingInUse -Source $_.FullName -Destination $target
+                }
             }
         }
 
