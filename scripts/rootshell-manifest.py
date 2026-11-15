@@ -26,10 +26,10 @@ def manifest(tag, commit, root=Path('.'), assets_dir=Path('release-assets')):
         }
         if target.startswith('windows'):
             assets[target]['format'] = 'zip'
-    protocol = int(re.search(r'pub const PROTOCOL_VERSION: u32 = (\d+);', (root / 'src/protocol/wire.rs').read_text())[1])
+    protocol = int(re.search(r'pub const PROTOCOL_VERSION: u32 = (\d+);', (root / 'src/protocol/wire.rs').read_text(encoding='utf-8'))[1])
     # The endpoint generation remains the upstream compatibility contract.
-    generation = int(re.search(r'pub const ENDPOINT_PROTOCOL_GENERATION: u32 = (\d+);', (root / 'src/protocol/endpoint.rs').read_text())[1])
-    base_version = re.search(r'^version = "([^"]+)"', (root / 'Cargo.toml').read_text(), re.MULTILINE)[1]
+    generation = int(re.search(r'pub const ENDPOINT_PROTOCOL_GENERATION: u32 = (\d+);', (root / 'src/protocol/endpoint.rs').read_text(encoding='utf-8'))[1])
+    base_version = re.search(r'^version = "([^"]+)"', (root / 'Cargo.toml').read_text(encoding='utf-8'), re.MULTILINE)[1]
     return dict(version=match[1], base_version=base_version, protocol=protocol, endpoint_generation=generation,
                 notes=f'Rootshell {tag}\n\nBuilt from {commit}.', assets=assets)
 
@@ -51,13 +51,13 @@ def promote():
         return subprocess.check_output(['gh', *args, '--repo', repo], text=True)
     # Read failures must abort promotion, rather than looking like an empty channel.
     tags = subprocess.check_output(['gh', 'api', f'repos/{repo}/releases', '--paginate', '--jq', '.[].tag_name'], text=True).splitlines()
-    candidate = json.loads(Path('release-assets/rootshell.json').read_text())
+    candidate = json.loads(Path('release-assets/rootshell.json').read_text(encoding='utf-8'))
     if 'rootshell-channel' in tags:
         release = json.loads(gh('release', 'view', 'rootshell-channel', '--json', 'assets'))
         if any(asset['name'] == 'rootshell.json' for asset in release['assets']):
             with tempfile.TemporaryDirectory() as folder:
                 gh('release', 'download', 'rootshell-channel', '--pattern', 'rootshell.json', '--dir', folder)
-                current = json.loads((Path(folder) / 'rootshell.json').read_text())
+                current = json.loads((Path(folder) / 'rootshell.json').read_text(encoding='utf-8'))
             if not should_promote(current, candidate):
                 print('Channel already at this version or newer; leaving it unchanged.')
                 return
@@ -70,4 +70,4 @@ if __name__ == '__main__' and '--promote' in sys.argv:
     promote()
 elif __name__ == '__main__':
     result = manifest(os.environ['GITHUB_REF_NAME'], os.environ['GITHUB_SHA'])
-    Path('release-assets/rootshell.json').write_text(json.dumps(result, indent=2) + '\n')
+    Path('release-assets/rootshell.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8', newline='\n')

@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location('rootshell', 'scripts/rootshell-manifest.py')
 rootshell = importlib.util.module_from_spec(spec)
@@ -48,11 +49,11 @@ class RootshellReleaseTests(unittest.TestCase):
         self.assertTrue(command.strip())
         with tempfile.TemporaryDirectory() as folder:
             python = Path(folder) / 'python3'
-            python.write_text('#!/bin/sh\nexit 42\n')
+            python.write_text('#!/bin/sh\nexit 42\n', encoding='utf-8', newline='\n')
             python.chmod(0o755)
             result = subprocess.run(
-                ['sh', '-e', '-c', command],
-                env=dict(os.environ, PATH=f'{folder}:/usr/bin:/bin'),
+                ['sh', '-e', '-c', 'PATH="$PWD:/usr/bin:/bin"\nexport PATH\n' + command],
+                cwd=folder,
                 capture_output=True,
             )
             self.assertEqual(result.returncode, 42)
@@ -68,6 +69,9 @@ class RootshellReleaseTests(unittest.TestCase):
         installer = Path('scripts/rootshell-install.sh').resolve()
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
+            (root / 'installer.sh').write_text(
+                installer.read_text(encoding='utf-8'), encoding='utf-8', newline='\n'
+            )
             mocks = root / 'mocks'
             mocks.mkdir()
             curl = mocks / 'curl'
@@ -78,18 +82,31 @@ case "$3" in
   *.sha256) asset=${3##*/}; printf '%s  %s\\n' "$TEST_DIGEST" "${asset%.sha256}" > "$2" ;;
   *) printf test-binary > "$2" ;;
 esac
-''')
+''', encoding='utf-8', newline='\n')
             curl.chmod(0o755)
-            env = dict(os.environ, HOME=str(root), SHELL='/bin/bash',
-                       PATH=f'{mocks}:/usr/bin:/bin',
+            uname = mocks / 'uname'
+            uname.write_text('''#!/bin/sh
+case "$1" in
+  -s) printf 'Linux\\n' ;;
+  -m) printf 'x86_64\\n' ;;
+  *) exit 1 ;;
+esac
+''', encoding='utf-8', newline='\n')
+            uname.chmod(0o755)
+            command = [
+                'sh', '-c',
+                'HOME="$PWD" PATH="$PWD/mocks:/usr/bin:/bin" exec sh ./installer.sh',
+            ]
+            env = dict(os.environ, SHELL='/bin/bash',
                        TEST_DIGEST=hashlib.sha256(b'test-binary').hexdigest())
             for _ in range(2):
-                subprocess.run(['sh', str(installer)], env=env, check=True, capture_output=True)
+                result = subprocess.run(command, cwd=root, env=env, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             dest = root / '.local/opt/herdr-rootshell/bin/herdr'
             self.assertEqual(dest.read_bytes(), b'test-binary')
             self.assertEqual((root / '.bashrc').read_text().count('# rootshell-herdr'), 1)
             env['TEST_DIGEST'] = '0' * 64
-            result = subprocess.run(['sh', str(installer)], env=env, capture_output=True)
+            result = subprocess.run(command, cwd=root, env=env, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(dest.read_bytes(), b'test-binary')
 
@@ -104,3 +121,31 @@ esac
             self.assertEqual(result['assets']['macos-aarch64']['sha256'], hashlib.sha256(b'binary').hexdigest())
             with self.assertRaises(ValueError):
                 rootshell.manifest('v0.1.2', 'abc', assets_dir=assets)
+
+    def test_manifest_reads_utf8_sources_with_an_ansi_default_encoding(self):
+        original_read_text = Path.read_text
+
+        def read_with_windows_default(path, encoding=None, errors=None, **kwargs):
+            return original_read_text(
+                path, encoding=encoding or 'cp1252', errors=errors, **kwargs
+            )
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = {
+                'src/protocol/wire.rs': '// UTF-8 marker: \u2701\npub const PROTOCOL_VERSION: u32 = 7;\n',
+                'src/protocol/endpoint.rs': 'pub const ENDPOINT_PROTOCOL_GENERATION: u32 = 2;\n',
+                'Cargo.toml': '[package]\nversion = "0.9.5"\n',
+            }
+            for name, contents in sources.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(contents, encoding='utf-8')
+            # Model a Windows ANSI locale without changing the process-wide locale.
+            with mock.patch.object(Path, 'read_text', read_with_windows_default):
+                result = rootshell.manifest(
+                    'rootshell-v0.1.2', 'abc', root=root, assets_dir=root / 'assets'
+                )
+            self.assertEqual(result['protocol'], 7)
+            self.assertEqual(result['endpoint_generation'], 2)
+            self.assertEqual(result['base_version'], '0.9.5')

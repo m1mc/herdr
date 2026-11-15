@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::Write;
 use std::os::fd::RawFd;
@@ -5,7 +6,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::ptr::NonNull;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub(super) const REMOTE_BRIDGE_CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
 
@@ -1063,10 +1066,54 @@ fn procargs2_env(buf: &[u8]) -> Option<&[u8]> {
     rest.get(env_start..)
 }
 
-/// Get the current working directory of a process.
-///
-/// Uses `proc_pidinfo(PROC_PIDVNODEPATHINFO)` to read `pvi_cdir.vip_path`.
-pub fn process_cwd(pid: u32) -> Option<PathBuf> {
+const CWD_CACHE_TTL: Duration = Duration::from_millis(250);
+const CWD_COLD_RESOLVE_TIMEOUT: Duration = Duration::from_millis(20);
+const CWD_REFRESH_WAIT_TIMEOUT: Duration = Duration::from_millis(5);
+const MAX_CONCURRENT_RESOLVERS: usize = 8;
+const MAX_CWD_CACHE_ENTRIES: usize = 256;
+
+struct CwdCacheEntry {
+    cwd: Option<PathBuf>,
+    observed_at: Instant,
+    last_resolve_slow: bool,
+}
+
+#[derive(Default)]
+struct InFlightResolver {
+    cond: Condvar,
+    result: Mutex<Option<Option<PathBuf>>>,
+    timed_out: AtomicBool,
+}
+
+#[derive(Default)]
+struct CwdCache {
+    entries: HashMap<u32, CwdCacheEntry>,
+    in_flight: HashMap<u32, Arc<InFlightResolver>>,
+}
+
+impl CwdCache {
+    fn store(&mut self, pid: u32, entry: CwdCacheEntry) {
+        self.entries.insert(pid, entry);
+        while self.entries.len() > MAX_CWD_CACHE_ENTRIES {
+            // A stalled resolver must retain its last known directory. The
+            // remaining entries are bounded, so eviction never scans a growing map.
+            let oldest = self
+                .entries
+                .iter()
+                .filter(|(pid, _)| !self.in_flight.contains_key(pid))
+                .min_by_key(|(_, entry)| entry.observed_at)
+                .map(|(&pid, _)| pid);
+            let Some(oldest) = oldest else {
+                break;
+            };
+            self.entries.remove(&oldest);
+        }
+    }
+}
+
+static CWD_CACHE: OnceLock<Arc<Mutex<CwdCache>>> = OnceLock::new();
+
+fn raw_process_cwd(pid: u32) -> Option<PathBuf> {
     if pid == 0 {
         return None;
     }
@@ -1102,6 +1149,139 @@ pub fn process_cwd(pid: u32) -> Option<PathBuf> {
         return None;
     }
     Some(PathBuf::from(OsStr::from_bytes(&vip_path[..nul])))
+}
+
+/// Resolve a process directory with bounded waits, even on stalled network mounts.
+///
+/// A short-lived cache and per-PID singleflight keep repeated queries cheap.
+/// Refreshes return stale data immediately after a slow lookup; cold queries
+/// wait at most 20ms and normal refreshes at most 5ms. At most eight background
+/// resolvers can be stuck inside `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
+pub fn process_cwd(pid: u32) -> Option<PathBuf> {
+    let cache = CWD_CACHE.get_or_init(|| Arc::new(Mutex::new(CwdCache::default())));
+    process_cwd_with_spawn(pid, cache, |pid, work| {
+        std::thread::Builder::new()
+            .name(format!("herdr-cwd-{pid}"))
+            .stack_size(256 * 1024)
+            .spawn(work)
+            .map(|_| ())
+    })
+}
+
+fn process_cwd_with_spawn(
+    pid: u32,
+    cache: &Arc<Mutex<CwdCache>>,
+    spawn: impl FnOnce(u32, Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+) -> Option<PathBuf> {
+    if pid == 0 {
+        return None;
+    }
+
+    // Cache lookup and resolver registration share a lock so a completed lookup
+    // cannot be missed between checking the cache and joining an in-flight query.
+    let (stale_fallback, has_cached_entry, last_resolve_slow, resolver, is_initiator) = {
+        let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = cache.entries.get(&pid);
+        if let Some(entry) = entry {
+            if entry.observed_at.elapsed() < CWD_CACHE_TTL {
+                return entry.cwd.clone();
+            }
+        }
+        let has_cached_entry = entry.is_some();
+        let stale_fallback = entry.and_then(|entry| entry.cwd.clone());
+        let last_resolve_slow = entry.is_some_and(|entry| entry.last_resolve_slow);
+        let (resolver, is_initiator) = if let Some(existing) = cache.in_flight.get(&pid) {
+            (Arc::clone(existing), false)
+        } else {
+            if cache.in_flight.len() >= MAX_CONCURRENT_RESOLVERS {
+                return stale_fallback;
+            }
+            let resolver = Arc::new(InFlightResolver::default());
+            cache.in_flight.insert(pid, Arc::clone(&resolver));
+            (resolver, true)
+        };
+        (
+            stale_fallback,
+            has_cached_entry,
+            last_resolve_slow,
+            resolver,
+            is_initiator,
+        )
+    };
+
+    if is_initiator {
+        let worker_resolver = Arc::clone(&resolver);
+        let worker_cache = Arc::clone(cache);
+        let spawn_res = spawn(
+            pid,
+            Box::new(move || {
+                let started_at = Instant::now();
+                let resolved = raw_process_cwd(pid);
+                let completed_at = Instant::now();
+                let mut result = worker_resolver
+                    .result
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let was_slow = completed_at.duration_since(started_at) >= CWD_REFRESH_WAIT_TIMEOUT
+                    || worker_resolver.timed_out.load(Ordering::Acquire);
+                {
+                    let mut cache = worker_cache.lock().unwrap_or_else(|e| e.into_inner());
+                    cache.in_flight.remove(&pid);
+                    cache.store(
+                        pid,
+                        CwdCacheEntry {
+                            cwd: resolved.clone(),
+                            observed_at: completed_at,
+                            last_resolve_slow: was_slow,
+                        },
+                    );
+                }
+                *result = Some(resolved);
+                worker_resolver.cond.notify_all();
+            }),
+        );
+
+        if let Err(err) = spawn_res {
+            // Never fall back to a synchronous vnode query, including when the
+            // OS cannot create another thread. Wake callers already sharing it.
+            let mut result = resolver.result.lock().unwrap_or_else(|e| e.into_inner());
+            *result = Some(stale_fallback.clone());
+            cache
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .in_flight
+                .remove(&pid);
+            resolver.cond.notify_all();
+            tracing::warn!(pid, %err, "failed to spawn process cwd resolver");
+            return stale_fallback;
+        }
+    }
+
+    if resolver.timed_out.load(Ordering::Acquire)
+        || last_resolve_slow
+        || (has_cached_entry && !is_initiator)
+    {
+        return stale_fallback;
+    }
+
+    let wait_budget = if has_cached_entry {
+        CWD_REFRESH_WAIT_TIMEOUT
+    } else {
+        CWD_COLD_RESOLVE_TIMEOUT
+    };
+    let result = resolver.result.lock().unwrap_or_else(|e| e.into_inner());
+    let (result, _) = resolver
+        .cond
+        .wait_timeout_while(result, wait_budget, |result| result.is_none())
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(resolved) = &*result {
+        resolved.clone()
+    } else {
+        // Holding the result lock makes timeout publication atomic with worker
+        // completion, so the next refresh cannot accidentally forget it was slow.
+        resolver.timed_out.store(true, Ordering::Release);
+        stale_fallback
+    }
 }
 
 pub fn session_processes(child_pid: u32) -> Vec<u32> {
@@ -1415,5 +1595,185 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
         assert_eq!(argv[1], "-c");
         assert!(argv[2].contains("EDITOR:-vi"));
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
+    }
+
+    fn cwd_test_cache() -> Arc<Mutex<CwdCache>> {
+        Arc::new(Mutex::new(CwdCache::default()))
+    }
+
+    fn expired_cwd_entry(cwd: Option<PathBuf>, last_resolve_slow: bool) -> CwdCacheEntry {
+        CwdCacheEntry {
+            cwd,
+            observed_at: Instant::now() - Duration::from_secs(60),
+            last_resolve_slow,
+        }
+    }
+
+    #[test]
+    fn process_cwd_does_not_resolve_synchronously_when_thread_creation_fails() {
+        let cache = cwd_test_cache();
+        let observed = process_cwd_with_spawn(std::process::id(), &cache, |_, _| {
+            Err(std::io::Error::other("resolver thread unavailable"))
+        });
+        assert_eq!(observed, None);
+        assert!(cache.lock().unwrap().in_flight.is_empty());
+    }
+
+    #[test]
+    fn process_cwd_preserves_stale_directory_when_thread_creation_fails() {
+        let cache = cwd_test_cache();
+        let expected = PathBuf::from("/stale-directory");
+        cache.lock().unwrap().entries.insert(
+            std::process::id(),
+            expired_cwd_entry(Some(expected.clone()), false),
+        );
+        let observed = process_cwd_with_spawn(std::process::id(), &cache, |_, _| {
+            Err(std::io::Error::other("resolver thread unavailable"))
+        });
+        assert_eq!(observed, Some(expected));
+        assert!(cache.lock().unwrap().in_flight.is_empty());
+    }
+
+    #[test]
+    fn process_cwd_completion_populates_cache_and_releases_resolver() {
+        let cache = cwd_test_cache();
+        let expected = std::env::current_dir().expect("current process directory");
+        let pid = std::process::id();
+        let observed = process_cwd_with_spawn(pid, &cache, |_, work| {
+            work();
+            Ok(())
+        });
+        assert_eq!(observed, Some(expected.clone()));
+        assert!(cache.lock().unwrap().in_flight.is_empty());
+        assert_eq!(
+            process_cwd_with_spawn(pid, &cache, |_, _| panic!("fresh directory is cached")),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn process_cwd_returns_none_for_zero_or_invalid_pid() {
+        assert_eq!(process_cwd(0), None);
+        assert_eq!(process_cwd(u32::MAX), None);
+    }
+
+    #[test]
+    fn process_cwd_resolves_and_caches_live_child_directory() {
+        let temp = std::env::temp_dir();
+        let expected = temp.canonicalize().expect("canonical temporary directory");
+        let mut child = Command::new("sleep")
+            .arg("10")
+            .current_dir(&temp)
+            .spawn()
+            .expect("spawn sleep process");
+        let pid = child.id();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let resolved_first = loop {
+            let resolved = process_cwd(pid);
+            if resolved.is_some() || Instant::now() >= deadline {
+                break resolved;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let resolved_second = process_cwd(pid);
+        let _ = child.kill();
+        let _ = child.wait();
+
+        assert_eq!(resolved_first, Some(expected));
+        assert_eq!(resolved_first, resolved_second);
+    }
+
+    #[test]
+    fn process_cwd_returns_stale_without_waiting_for_in_flight_resolver() {
+        let pid = 42;
+        let expected = PathBuf::from("/stale-directory");
+        let cache = cwd_test_cache();
+        let resolver = Arc::new(InFlightResolver::default());
+        {
+            let mut state = cache.lock().unwrap();
+            state
+                .entries
+                .insert(pid, expired_cwd_entry(Some(expected.clone()), false));
+            state.in_flight.insert(pid, Arc::clone(&resolver));
+        }
+        let observed =
+            process_cwd_with_spawn(pid, &cache, |_, _| panic!("query already in flight"));
+        assert_eq!(observed, Some(expected));
+        // Waiting on this unresolved query would set timed_out. No timing limit
+        // is needed to distinguish the stale-return path from a bounded wait.
+        assert!(!resolver.timed_out.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn process_cwd_slow_negative_cache_refresh_does_not_wait() {
+        let cache = cwd_test_cache();
+        cache
+            .lock()
+            .unwrap()
+            .entries
+            .insert(42, expired_cwd_entry(None, true));
+        assert_eq!(process_cwd_with_spawn(42, &cache, |_, _| Ok(())), None);
+        let resolver = Arc::clone(cache.lock().unwrap().in_flight.get(&42).unwrap());
+        assert!(!resolver.timed_out.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn process_cwd_deduplicates_cold_queries_after_timeout() {
+        let cache = cwd_test_cache();
+        assert_eq!(process_cwd_with_spawn(42, &cache, |_, _| Ok(())), None);
+        let resolver = Arc::clone(cache.lock().unwrap().in_flight.get(&42).unwrap());
+        assert!(resolver.timed_out.load(Ordering::Acquire));
+        assert_eq!(
+            process_cwd_with_spawn(42, &cache, |_, _| panic!("query already in flight")),
+            None
+        );
+    }
+
+    #[test]
+    fn process_cwd_concurrency_limit_keeps_stale_directory() {
+        let cache = cwd_test_cache();
+        let expected = PathBuf::from("/stale-directory");
+        {
+            let mut state = cache.lock().unwrap();
+            state
+                .entries
+                .insert(42, expired_cwd_entry(Some(expected.clone()), false));
+            for pid in 1..=MAX_CONCURRENT_RESOLVERS as u32 {
+                state
+                    .in_flight
+                    .insert(pid, Arc::new(InFlightResolver::default()));
+            }
+        }
+        assert_eq!(
+            process_cwd_with_spawn(42, &cache, |_, _| panic!("resolver limit exceeded")),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn cwd_cache_eviction_retains_stalled_directory_and_bounds_recent_entries() {
+        let mut cache = CwdCache::default();
+        let expected = PathBuf::from("/stale-directory");
+        cache
+            .entries
+            .insert(1, expired_cwd_entry(Some(expected.clone()), true));
+        cache
+            .in_flight
+            .insert(1, Arc::new(InFlightResolver::default()));
+        for pid in 2..=MAX_CWD_CACHE_ENTRIES as u32 + 2 {
+            cache.store(
+                pid,
+                CwdCacheEntry {
+                    cwd: None,
+                    observed_at: Instant::now(),
+                    last_resolve_slow: false,
+                },
+            );
+        }
+        assert_eq!(
+            cache.entries.get(&1).and_then(|entry| entry.cwd.as_ref()),
+            Some(&expected)
+        );
+        assert!(cache.entries.len() <= MAX_CWD_CACHE_ENTRIES);
     }
 }

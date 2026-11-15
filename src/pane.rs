@@ -435,11 +435,6 @@ fn absolute_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(unix)]
-fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
-    absolute_process_cwd(pid).filter(|cwd| cwd.is_dir())
-}
-
-#[cfg(unix)]
 fn foreground_member_cwd_different_from_shell(
     shell_pid: u32,
     shell_cwd: Option<&std::path::PathBuf>,
@@ -2380,6 +2375,11 @@ fn publish_reported_cwd(
     reported_cwd: &Arc<Mutex<Option<std::path::PathBuf>>>,
     events: &mpsc::Sender<AppEvent>,
 ) {
+    if let Ok(current) = reported_cwd.lock() {
+        if current.as_ref() == Some(&cwd) {
+            return;
+        }
+    }
     let Some(cwd) = usable_reported_cwd(cwd) else {
         return;
     };
@@ -4186,7 +4186,7 @@ impl PaneRuntime {
             let leader_cwd = self
                 .io
                 .foreground_process_group_id()
-                .and_then(usable_process_cwd);
+                .and_then(absolute_process_cwd);
             leader_cwd.or_else(|| self.cwd())
         }
 
@@ -4201,19 +4201,26 @@ impl PaneRuntime {
         #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
-            let shell_cwd = absolute_process_cwd(pid);
             let foreground_pgid = self
                 .io
                 .foreground_process_group_id()
                 .or_else(|| crate::platform::foreground_process_group_id(pid));
-            let leader_cwd = foreground_pgid.and_then(absolute_process_cwd);
+
+            let foreground_pgid = foreground_pgid?;
+            if foreground_pgid == pid {
+                return absolute_process_cwd(pid);
+            }
+
+            let leader_cwd = absolute_process_cwd(foreground_pgid);
 
             // The group leader's cwd is authoritative (issue #3270): a helper
             // process that chdirs elsewhere inside the same foreground group
             // must not override it. Scan other members only when the leader's
             // cwd cannot be read at all.
-            leader_cwd
-                .or_else(|| foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()))
+            leader_cwd.or_else(|| {
+                let shell_cwd = absolute_process_cwd(pid);
+                foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref())
+            })
         }
 
         #[cfg(not(unix))]
@@ -5110,6 +5117,15 @@ mod tests {
             return;
         }
         assert_eq!(observed, Some(expected_cwd));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn foreground_cwd_does_not_fall_back_to_reported_cwd_without_foreground_group() {
+        let (runtime, _rx) = PaneRuntime::test_with_channel(80, 24);
+        *runtime.reported_cwd.lock().unwrap() = Some(std::env::temp_dir());
+
+        assert_eq!(runtime.foreground_cwd(), None);
     }
 
     #[cfg(unix)]

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -8,6 +9,37 @@ from scripts.rootshell_sync import next_build_id
 
 
 SCRIPT = Path('scripts/rootshell_sync.py').resolve()
+
+# Keep CLI parsing isolated while intercepting only the external GitHub boundary.
+SYNC_TEST_BOOTSTRAP = '''
+import os
+from pathlib import Path
+import runpy
+import subprocess
+import sys
+from unittest.mock import patch
+
+real_run = subprocess.run
+
+def run(command, *args, **kwargs):
+    if command[0] not in ('gh', 'gh.exe'):
+        return real_run(command, *args, **kwargs)
+    arguments = command[1:]
+    if arguments[:2] == ['run', 'list']:
+        return subprocess.CompletedProcess(command, 0, stdout='[]', stderr='')
+    if arguments[:2] != ['workflow', 'run']:
+        raise AssertionError(f'unexpected GitHub command: {arguments!r}')
+    with Path(os.environ['DISPATCH_LOG']).open('a', encoding='utf-8') as log:
+        log.write('\\n'.join(arguments) + '\\n')
+    code = int(os.environ.get('DISPATCH_EXIT', '0'))
+    if code and kwargs.get('check'):
+        raise subprocess.CalledProcessError(code, command)
+    return subprocess.CompletedProcess(command, code)
+
+sys.argv = sys.argv[1:]
+with patch('subprocess.run', side_effect=run):
+    runpy.run_path(sys.argv[0], run_name='__main__')
+'''
 
 
 class RootshellSyncTests(unittest.TestCase):
@@ -37,17 +69,8 @@ class RootshellSyncTests(unittest.TestCase):
         self.run_git(self.work, 'switch', '-c', 'rootshell-universal')
         self.run_git(self.work, 'tag', 'v0.9.5-rootshell.0.1.13')
         self.run_git(self.work, 'push', 'origin', 'rootshell-universal', '--tags')
-        tools = self.root / 'bin'
-        tools.mkdir()
-        gh = tools / 'gh'
-        gh.write_text('''#!/bin/sh
-if [ "$1 $2" = "run list" ]; then printf '[]'; exit 0; fi
-printf '%s\n' "$@" >> "$DISPATCH_LOG"
-exit "${DISPATCH_EXIT:-0}"
-''')
-        gh.chmod(0o755)
         self.log = self.root / 'dispatch.log'
-        self.env.update(PATH=f'{tools}:{os.environ["PATH"]}', DISPATCH_LOG=str(self.log))
+        self.env['DISPATCH_LOG'] = str(self.log)
 
     def run_git(self, cwd, *args):
         return subprocess.check_output(['git', *args], cwd=cwd, env=self.env,
@@ -65,7 +88,8 @@ exit "${DISPATCH_EXIT:-0}"
         self.run_git(self.source, 'push', 'origin', 'master', '--tags')
 
     def sync(self, *args, success=True):
-        result = subprocess.run(['python3', str(SCRIPT), '--upstream', str(self.upstream),
+        result = subprocess.run([sys.executable, '-c', SYNC_TEST_BOOTSTRAP,
+                                 str(SCRIPT), '--upstream', str(self.upstream),
                                  '--repo', 'example/fork', *args], cwd=self.work,
                                 env=self.env, capture_output=True, text=True)
         if success:

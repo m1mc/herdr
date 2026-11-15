@@ -325,22 +325,27 @@ fn lagging_subscription_closes_without_interrupting_other_clients() {
     let paused_read = test.app_request();
     assert_eq!(paused_read.request.id, "slow:sub:1:read");
     assert!(matches!(paused_read.request.method, Method::PaneRead(_)));
-    // Every batch must finish before the held app request can time out.
-    let batches = EventHub::MAX_EVENTS / 128 + 1;
-    let deadline = Instant::now() + RESPONSE_TIMEOUT;
-    for batch in 0..batches {
-        let indices = batch * 128..(batch + 1) * 128;
-        for index in indices.clone() {
-            test.hub.push(renamed_event(index));
-        }
-        healthy.assert_renames(indices, deadline);
+    // Advance the healthy cursor before overflowing only the paused subscriber.
+    test.hub.push(renamed_event(0));
+    healthy.assert_renames(0..1, Instant::now() + RESPONSE_TIMEOUT);
+    // Unmatched events fill the real history ring without turning this isolation
+    // test into a socket-throughput benchmark over many polling intervals.
+    for _ in 0..EventHub::MAX_EVENTS - 1 {
+        test.hub.push(EventEnvelope {
+            event: EventKind::TabFocused,
+            data: EventData::TabFocused {
+                tab_id: "tab_1".into(),
+                workspace_id: "workspace_1".into(),
+            },
+        });
     }
+    test.hub.push(renamed_event(1));
+    healthy.assert_renames(1..2, Instant::now() + RESPONSE_TIMEOUT);
 
     reply_to_probe(paused_read);
     slow.assert_history_lost("slow");
-    let next = batches * 128;
-    test.hub.push(renamed_event(next));
-    healthy.assert_renames(next..next + 1, Instant::now() + RESPONSE_TIMEOUT);
+    test.hub.push(renamed_event(2));
+    healthy.assert_renames(2..3, Instant::now() + RESPONSE_TIMEOUT);
 
     let mut ordinary = test.connect();
     ordinary.send(json!({"id": "ordinary", "method": "workspace.list", "params": {}}));
