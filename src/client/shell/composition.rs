@@ -591,6 +591,7 @@ impl ClientShellState {
                     &mut composed,
                 );
                 ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
+                release_wide_glyphs_cut_by(&mut composed, geometry.outer);
                 frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
                 blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
                 self.hits.popup = Some(PaneHit {
@@ -661,6 +662,7 @@ impl ClientShellState {
                 let rendered =
                     render::render_context_menu(&mut composed, menu, &self.config.palette)?;
                 occlusion.cover(rendered.area);
+                release_wide_glyphs_cut_by(&mut composed, rendered.area);
                 self.hits.context_menu_rows = rendered.menu_rows;
                 None
             } else if let ClientShellOverlay::GlobalMenu(menu) = overlay {
@@ -672,6 +674,7 @@ impl ClientShellState {
                     &self.config.palette,
                 )?;
                 occlusion.cover(rendered.area);
+                release_wide_glyphs_cut_by(&mut composed, rendered.area);
                 self.hits.global_menu_rows = rendered.menu_rows;
                 None
             } else {
@@ -685,6 +688,7 @@ impl ClientShellState {
                     &self.config.palette,
                 )?;
                 occlusion.cover(rendered.area);
+                release_wide_glyphs_cut_by(&mut composed, rendered.area);
                 self.hits.overlay_primary = rendered.primary;
                 self.hits.overlay_clear = rendered.clear;
                 self.hits.overlay_cancel = rendered.cancel;
@@ -817,6 +821,34 @@ fn render_client_copy_search_highlights(
     }
 }
 
+/// Blank wide glyphs that an overlay at `area` cut in half. The encoder skips
+/// the column after a wide glyph, so a lead cell left of the overlay would hide
+/// the overlay's first column, and a spacer tail right of it would never be
+/// repainted once its lead is covered.
+fn release_wide_glyphs_cut_by(buffer: &mut ratatui::buffer::Buffer, area: Rect) {
+    use unicode_width::UnicodeWidthStr;
+
+    let area = area.intersection(buffer.area);
+    if area.is_empty() {
+        return;
+    }
+    for y in area.top()..area.bottom() {
+        if area.left() > buffer.area.left() {
+            let lead = &mut buffer[(area.left() - 1, y)];
+            if lead.symbol().width() > 1 {
+                lead.set_symbol(" ");
+            }
+        }
+        if area.right() < buffer.area.right() && buffer[(area.right() - 1, y)].symbol().width() < 2
+        {
+            let tail = &mut buffer[(area.right(), y)];
+            if tail.symbol().is_empty() {
+                tail.set_symbol(" ");
+            }
+        }
+    }
+}
+
 fn client_popup_size(size: crate::protocol::ClientShellPopupSize) -> crate::popup_size::PopupSize {
     match size {
         crate::protocol::ClientShellPopupSize::Cells(cells) => {
@@ -825,5 +857,59 @@ fn client_popup_size(size: crate::protocol::ClientShellPopupSize) -> crate::popu
         crate::protocol::ClientShellPopupSize::Percent(percent) => {
             crate::popup_size::PopupSize::Percent(percent)
         }
+    }
+}
+
+#[cfg(test)]
+mod wide_glyph_tests {
+    use super::*;
+
+    /// Paint a bordered overlay over a row whose wide glyph straddles the
+    /// overlay's left edge (and another its right edge), then present it
+    /// through the real encoder into a terminal emulator.
+    fn present_overlay_over_wide_glyphs(release: bool) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+        let mut base = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 12, 3));
+        base.set_string(0, 1, "abc中de中fg", ratatui::style::Style::default());
+        // Pane frames store a wide glyph's spacer tail as an empty symbol.
+        for x in [4, 8] {
+            base[(x, 1)].set_symbol("");
+        }
+        let mut frame = crate::protocol::FrameData::from_ratatui_buffer(&base, None);
+        let mut composed = frame.to_ratatui_buffer().expect("frame buffer");
+        // "中" leads at columns 3 and 7; the overlay covers columns 4..=7.
+        let outer = Rect::new(4, 0, 4, 3);
+        ratatui::widgets::Widget::render(ratatui::widgets::Clear, outer, &mut composed);
+        ratatui::widgets::Widget::render(
+            ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL),
+            outer,
+            &mut composed,
+        );
+        if release {
+            release_wide_glyphs_cut_by(&mut composed, outer);
+        }
+        frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
+
+        let mut client = crate::client::state::ClientState::test_new();
+        let mut terminal = crate::ghostty::Terminal::new(12, 3, 0).unwrap();
+        let mut output = Vec::new();
+        assert!(client.try_present_frame_to(&mut output, frame));
+        terminal.write(&output);
+        let cell = |x| terminal.screen_cell(x, 1).unwrap().1;
+        (cell(3), cell(4), cell(8))
+    }
+
+    #[test]
+    fn overlay_border_survives_a_wide_glyph_cut_at_its_edges() {
+        let (left, border, right) = present_overlay_over_wide_glyphs(true);
+        assert_eq!(left, vec![u32::from(' ')]);
+        assert_eq!(border, vec![u32::from('│')]);
+        assert_eq!(right, vec![u32::from(' ')]);
+    }
+
+    #[test]
+    fn unreleased_wide_glyph_hides_the_overlay_border() {
+        let (left, border, _) = present_overlay_over_wide_glyphs(false);
+        assert_eq!(left, vec![u32::from('中')]);
+        assert_ne!(border, vec![u32::from('│')]);
     }
 }
