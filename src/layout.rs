@@ -295,6 +295,22 @@ impl TileLayout {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
     }
 
+    /// Set the direction of the split that directly contains `pane`, keeping
+    /// its ratio, children and focus. Returns `None` when `pane` is absent or
+    /// is the only pane, otherwise whether the direction changed.
+    pub fn set_parent_split_direction(
+        &mut self,
+        pane: PaneId,
+        new_direction: Direction,
+    ) -> Option<bool> {
+        let Node::Split { direction, .. } = find_parent_split_mut(&mut self.root, pane)? else {
+            return None;
+        };
+        let changed = *direction != new_direction;
+        *direction = new_direction;
+        Some(changed)
+    }
+
     /// Adjust the nearest split in the given direction for the focused pane.
     /// `delta` is positive to grow, negative to shrink.
     pub fn resize_focused(&mut self, nav: NavDirection, delta: f32, area: Rect) {
@@ -677,6 +693,20 @@ fn set_ratio_at(node: &mut Node, path: &[bool], new_ratio: f32) -> bool {
     }
 }
 
+fn find_parent_split_mut(node: &mut Node, target: PaneId) -> Option<&mut Node> {
+    let Node::Split { first, second, .. } = node else {
+        return None;
+    };
+    let is_child = |child: &Node| matches!(child, Node::Pane(id) if *id == target);
+    if is_child(first) || is_child(second) {
+        return Some(node);
+    }
+    let Node::Split { first, second, .. } = node else {
+        unreachable!("matched as split above");
+    };
+    find_parent_split_mut(first, target).or_else(|| find_parent_split_mut(second, target))
+}
+
 fn get_ratio_at(node: &Node, path: &[bool]) -> Option<f32> {
     if let Node::Split {
         ratio,
@@ -766,6 +796,62 @@ mod tests {
         let resized = layout.splits(area);
         assert_eq!(resized[1].pos, splits[1].pos);
         assert_eq!(resized[2].pos, 47);
+    }
+
+    #[test]
+    fn parent_split_direction_changes_only_the_split_containing_the_pane() {
+        let ids = [PaneId::alloc(), PaneId::alloc(), PaneId::alloc()];
+        let mut layout = TileLayout::from_saved(
+            Node::Split {
+                direction: Direction::Horizontal,
+                ratio: 0.3,
+                first: Box::new(Node::Pane(ids[0])),
+                second: Box::new(split_node(ids[1], Direction::Vertical, ids[2], 0.7)),
+            },
+            ids[2],
+        );
+        let area = Rect::new(0, 0, 100, 40);
+        let directions = |layout: &TileLayout| {
+            layout
+                .splits(area)
+                .into_iter()
+                .map(|split| (split.path, split.direction, split.ratio))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            layout.set_parent_split_direction(ids[2], Direction::Horizontal),
+            Some(true)
+        );
+        assert_eq!(
+            directions(&layout),
+            vec![
+                (vec![], Direction::Horizontal, 0.3),
+                (vec![true], Direction::Horizontal, 0.7),
+            ]
+        );
+        assert_eq!(layout.focused(), ids[2]);
+        assert_eq!(layout.pane_ids(), ids.to_vec());
+
+        assert_eq!(
+            layout.set_parent_split_direction(ids[1], Direction::Horizontal),
+            Some(false)
+        );
+        assert_eq!(
+            layout.set_parent_split_direction(ids[0], Direction::Vertical),
+            Some(true)
+        );
+        assert_eq!(directions(&layout)[0], (vec![], Direction::Vertical, 0.3));
+
+        let (mut single, root) = TileLayout::new();
+        assert_eq!(
+            single.set_parent_split_direction(root, Direction::Vertical),
+            None
+        );
+        assert_eq!(
+            layout.set_parent_split_direction(PaneId::alloc(), Direction::Vertical),
+            None
+        );
     }
 
     #[test]

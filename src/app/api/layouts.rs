@@ -4,7 +4,8 @@ use ratatui::layout::Direction;
 
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, LayoutApplyParams, LayoutDescription, LayoutExportParams,
-    LayoutNode, LayoutPane, LayoutSetSplitRatioParams, ResponseResult, SplitDirection,
+    LayoutNode, LayoutPane, LayoutSetSplitDirectionParams, LayoutSetSplitRatioParams,
+    ResponseResult, SplitDirection,
 };
 use crate::app::{App, Mode};
 use crate::layout::{Node, PaneId};
@@ -257,6 +258,37 @@ impl App {
         };
         self.emit_layout_updated_event(ws_idx, tab_idx);
         encode_success(id, ResponseResult::LayoutSplitRatioSet { layout })
+    }
+
+    pub(super) fn handle_layout_set_split_direction(
+        &mut self,
+        id: String,
+        params: LayoutSetSplitDirectionParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.resolve_optional_pane(params.pane_id.as_deref()) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(pane_id) else {
+            return encode_error(id, "pane_not_found", "pane not found");
+        };
+        let Some(changed) = self.state.workspaces[ws_idx].tabs[tab_idx]
+            .layout
+            .set_parent_split_direction(pane_id, layout_direction(&params.direction))
+        else {
+            return encode_error(id, "split_not_found", "pane is not inside a split");
+        };
+
+        if changed {
+            self.schedule_session_save();
+            self.emit_layout_updated_event(ws_idx, tab_idx);
+        }
+        let Some(layout) = self.layout_description(ws_idx, tab_idx) else {
+            return encode_error(id, "layout_not_found", "layout unavailable");
+        };
+        encode_success(
+            id,
+            ResponseResult::LayoutSplitDirectionSet { changed, layout },
+        )
     }
 
     fn resolve_layout_export_target(&self, params: &LayoutExportParams) -> Option<(usize, usize)> {
@@ -755,6 +787,67 @@ mod tests {
                 if layout.tab_id == app.public_tab_id(0, 0).unwrap()
                     && (layout.splits[0].ratio - 0.72).abs() < f32::EPSILON
         ));
+    }
+
+    #[test]
+    fn layout_set_split_direction_reorients_the_focused_split_and_keeps_ratio() {
+        let mut app = app_with_workspace();
+        app.state.workspaces[0].test_split(Direction::Vertical);
+        assert!(app.state.workspaces[0].tabs[0]
+            .layout
+            .set_ratio_at(&[], 0.3));
+        let set = |app: &mut App, direction| {
+            let response = app.handle_layout_set_split_direction(
+                "req".into(),
+                LayoutSetSplitDirectionParams {
+                    pane_id: None,
+                    direction,
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            let ResponseResult::LayoutSplitDirectionSet { changed, layout } = success.result else {
+                panic!("expected layout split direction set response");
+            };
+            let LayoutNode::Split {
+                direction, ratio, ..
+            } = layout.root
+            else {
+                panic!("expected split layout root");
+            };
+            assert!((ratio - 0.3).abs() < f32::EPSILON);
+            (changed, direction)
+        };
+
+        assert_eq!(
+            set(&mut app, SplitDirection::Right),
+            (true, SplitDirection::Right)
+        );
+        let events = app.event_hub.events_after(0).len();
+        assert_eq!(
+            set(&mut app, SplitDirection::Right),
+            (false, SplitDirection::Right)
+        );
+        assert_eq!(app.event_hub.events_after(0).len(), events);
+        assert_eq!(
+            set(&mut app, SplitDirection::Down),
+            (true, SplitDirection::Down)
+        );
+    }
+
+    #[test]
+    fn layout_set_split_direction_rejects_a_single_pane() {
+        let mut app = app_with_workspace();
+
+        let response = app.handle_layout_set_split_direction(
+            "req".into(),
+            LayoutSetSplitDirectionParams {
+                pane_id: None,
+                direction: SplitDirection::Right,
+            },
+        );
+
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "split_not_found");
     }
 
     #[test]

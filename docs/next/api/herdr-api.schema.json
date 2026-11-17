@@ -3210,6 +3210,25 @@
             }
           ]
         },
+        "LayoutSetSplitDirectionParams": {
+          "description": "Re-orient the split that directly contains a pane without changing its ratio.",
+          "properties": {
+            "direction": {
+              "$ref": "#/schemas/request/$defs/SplitDirection"
+            },
+            "pane_id": {
+              "description": "Pane whose enclosing split changes. Defaults to the focused pane.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "direction"
+          ],
+          "type": "object"
+        },
         "LayoutSetSplitRatioParams": {
           "properties": {
             "pane_id": {
@@ -6828,6 +6847,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/LayoutSetSplitRatioParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "layout.set_split_direction",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/LayoutSetSplitDirectionParams"
             }
           },
           "required": [
@@ -11491,6 +11526,26 @@
               },
               "required": [
                 "type",
+                "layout"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "changed": {
+                  "type": "boolean"
+                },
+                "layout": {
+                  "$ref": "#/schemas/success_response/$defs/LayoutDescription"
+                },
+                "type": {
+                  "const": "layout_split_direction_set",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "changed",
                 "layout"
               ],
               "type": "object"

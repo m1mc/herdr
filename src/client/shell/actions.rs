@@ -871,9 +871,10 @@ impl ClientShellState {
         action: crate::input::KeybindAction,
     ) -> Option<crate::api::schema::Method> {
         use crate::api::schema::{
-            Method, PaneDirection, PaneFocusDirectionParams, PaneResizeParams, PaneSplitParams,
-            PaneSwapParams, PaneTarget, PaneZoomMode, PaneZoomParams, SplitDirection,
-            TabCreateParams, TabMoveParams, TabTarget, WorkspaceTarget,
+            LayoutSetSplitDirectionParams, Method, PaneDirection, PaneFocusDirectionParams,
+            PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget, PaneZoomMode,
+            PaneZoomParams, SplitDirection, TabCreateParams, TabMoveParams, TabTarget,
+            WorkspaceTarget,
         };
         use crate::input::KeybindAction;
 
@@ -1069,6 +1070,16 @@ impl ClientShellState {
                     env: Default::default(),
                 }))
             }
+            KeybindAction::ArrangeSideBySide | KeybindAction::ArrangeStacked => Some(
+                Method::LayoutSetSplitDirection(LayoutSetSplitDirectionParams {
+                    pane_id: focused_pane,
+                    direction: if action == KeybindAction::ArrangeSideBySide {
+                        SplitDirection::Right
+                    } else {
+                        SplitDirection::Down
+                    },
+                }),
+            ),
             KeybindAction::CyclePaneNext | KeybindAction::CyclePanePrevious => {
                 let focused_tab = focused_tab?;
                 let panes = snapshot

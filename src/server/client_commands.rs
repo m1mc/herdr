@@ -17,6 +17,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "command.invoke",
     "integration.install",
     "integration.list",
+    "layout.set_split_direction",
     "layout.set_split_ratio",
     "pane.clear",
     "pane.close",
@@ -296,6 +297,10 @@ mod tests {
         assert_eq!(
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
+        );
+        assert_eq!(
+            actual.remove("layout.set_split_direction").as_deref(),
+            Some("55ae597812a92ecb03c17e888f0dadee2afc32b5950770102c7ed3e7bbad320d")
         );
 
         assert_eq!(

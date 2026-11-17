@@ -794,6 +794,18 @@
           "description": "Split pane horizontally (stacked)."
         },
         {
+          "key": "keys.arrange_side_by_side",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Turn the split around the focused pane side by side, keeping its ratio and panes. Unset by default."
+        },
+        {
+          "key": "keys.arrange_stacked",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Turn the split around the focused pane stacked, keeping its ratio and panes. Unset by default."
+        },
+        {
           "key": "keys.close_pane",
           "type": "keybinding",
           "default": "\"prefix+x\"",

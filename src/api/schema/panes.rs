@@ -167,6 +167,15 @@ pub struct LayoutSetSplitRatioParams {
     pub ratio: f32,
 }
 
+/// Re-orient the split that directly contains a pane without changing its ratio.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LayoutSetSplitDirectionParams {
+    /// Pane whose enclosing split changes. Defaults to the focused pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    pub direction: SplitDirection,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LayoutDescription {
     pub workspace_id: String,

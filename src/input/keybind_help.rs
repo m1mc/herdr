@@ -168,6 +168,11 @@ pub(crate) fn keybind_help_groups(
                     binding_label(&keybinds.split_horizontal),
                     "split horizontal",
                 ),
+                entry(
+                    binding_label(&keybinds.arrange_side_by_side),
+                    "arrange side by side",
+                ),
+                entry(binding_label(&keybinds.arrange_stacked), "arrange stacked"),
                 entry(binding_label(&keybinds.close_pane), "close pane"),
                 entry(binding_label(&keybinds.rename_pane), "rename pane"),
                 entry(binding_label(&keybinds.edit_scrollback), "edit scrollback"),

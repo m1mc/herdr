@@ -147,6 +147,10 @@ pub enum ResponseResult {
     LayoutSplitRatioSet {
         layout: LayoutDescription,
     },
+    LayoutSplitDirectionSet {
+        changed: bool,
+        layout: LayoutDescription,
+    },
     PaneNeighbor {
         neighbor: PaneNeighborResult,
     },
