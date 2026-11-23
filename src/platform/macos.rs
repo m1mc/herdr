@@ -767,8 +767,14 @@ fn build_terminal_notifier_command(
     body: Option<&str>,
     activate_bundle_id: Option<&str>,
 ) {
-    cmd.arg("-title").arg(title);
-    cmd.arg("-message").arg(body.unwrap_or_default());
+    let title_clean = title.trim();
+    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let message_text = match body {
+        Some(b) if !b.trim().is_empty() => b.trim(),
+        _ => title_text,
+    };
+    cmd.arg("-title").arg(title_text);
+    cmd.arg("-message").arg(message_text);
     if let Some(bundle_id) = activate_bundle_id {
         cmd.arg("-activate").arg(bundle_id);
     }
@@ -779,15 +785,21 @@ fn show_osascript_notification(
     body: Option<&str>,
     command: &mut impl FnMut(&str) -> Command,
 ) -> std::io::Result<bool> {
+    let title_clean = title.trim();
+    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let message_text = match body {
+        Some(b) if !b.trim().is_empty() => b.trim(),
+        _ => title_text,
+    };
     let mut cmd = command("/usr/bin/osascript");
     cmd.arg("-e")
         .arg("on run argv")
         .arg("-e")
-        .arg("display notification (item 2 of argv) with title (item 1 of argv)")
+        .arg("tell application \"System Events\" to display notification (item 2 of argv) with title (item 1 of argv)")
         .arg("-e")
         .arg("end run")
-        .arg(title)
-        .arg(body.unwrap_or_default());
+        .arg(title_text)
+        .arg(message_text);
     run_notification_command(cmd)
 }
 
@@ -1582,8 +1594,27 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
         let _ = std::fs::remove_file(&path);
         assert_eq!(
             args,
-            "-e\non run argv\n-e\ndisplay notification (item 2 of argv) with title (item 1 of argv)\n-e\nend run\ntitle\nbody\n"
+            "-e\non run argv\n-e\ntell application \"System Events\" to display notification (item 2 of argv) with title (item 1 of argv)\n-e\nend run\ntitle\nbody\n"
         );
+    }
+
+    #[test]
+    fn desktop_notification_filters_empty_and_whitespace_body_and_title() {
+        let mut cmd = Command::new("terminal-notifier");
+        build_terminal_notifier_command(&mut cmd, "  ", None, None);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-title", "Herdr", "-message", "Herdr"]);
+
+        let mut cmd2 = Command::new("terminal-notifier");
+        build_terminal_notifier_command(&mut cmd2, "Task Done", Some("   "), None);
+        let args2: Vec<_> = cmd2
+            .get_args()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args2, vec!["-title", "Task Done", "-message", "Task Done"]);
     }
 
     #[test]

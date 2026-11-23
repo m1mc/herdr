@@ -63,21 +63,29 @@ pub fn split_message(message: &str) -> (&str, Option<&str>) {
 }
 
 fn build_osc9_notification(title: &str, body: Option<&str>) -> Vec<u8> {
-    let message = sanitize_text(match body {
-        Some(body) if !body.is_empty() => format!("{title}: {body}"),
-        _ => title.to_string(),
-    });
+    let title_clean = sanitize_text(title);
+    let title_clean = title_clean.trim();
+    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let message = match body.map(sanitize_text).map(|b| b.trim().to_string()).filter(|b| !b.is_empty()) {
+        Some(b) => format!("{title_text}: {b}"),
+        None => title_text.to_string(),
+    };
     format!("\x1b]9;{message}\x1b\\").into_bytes()
 }
 
 fn build_osc99_notification(title: &str, body: Option<&str>) -> Vec<u8> {
-    let title = sanitize_text(title);
-    match body {
-        Some(body) if !body.is_empty() => {
-            let body = sanitize_text(body);
-            format!("\x1b]99;i=1:d=0;{title}\x1b\\\x1b]99;i=1:p=body;{body}\x1b\\").into_bytes()
+    let title_clean = sanitize_text(title);
+    let title_clean = title_clean.trim();
+    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let body_clean = body
+        .map(sanitize_text)
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty());
+    match body_clean {
+        Some(body) => {
+            format!("\x1b]99;i=1:d=0;{title_text}\x1b\\\x1b]99;i=1:p=body;{body}\x1b\\").into_bytes()
         }
-        _ => format!("\x1b]99;;{title}\x1b\\").into_bytes(),
+        _ => format!("\x1b]99;;{title_text}\x1b\\").into_bytes(),
     }
 }
 
