@@ -657,6 +657,11 @@ pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }
 
+/// Opening URLs is handled locally on this platform.
+pub fn host_terminal_must_open_urls() -> bool {
+    false
+}
+
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     Command::new("open")
         .arg(url)

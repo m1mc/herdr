@@ -871,6 +871,22 @@ pub fn clipboard_text_matches(_bytes: &[u8]) -> Option<bool> {
     None
 }
 
+/// True when a client launched over SSH has no display to open URLs on, so the
+/// host terminal must receive OSC 8 hyperlink destinations and open links itself.
+pub fn host_terminal_must_open_urls() -> bool {
+    static MUST_DELEGATE: OnceLock<bool> = OnceLock::new();
+    *MUST_DELEGATE.get_or_init(|| {
+        let set = |key: &str| std::env::var_os(key).is_some_and(|value| !value.is_empty());
+        let over_ssh = set("SSH_CONNECTION") || set("SSH_TTY") || set("SSH_CLIENT");
+        let has_display = set("DISPLAY") || set("WAYLAND_DISPLAY");
+        delegates_url_open(over_ssh, has_display, running_inside_wsl())
+    })
+}
+
+fn delegates_url_open(over_ssh: bool, has_display: bool, inside_wsl: bool) -> bool {
+    over_ssh && !has_display && !inside_wsl
+}
+
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     Command::new("xdg-open")
         .arg(url)
@@ -1239,6 +1255,15 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use std::{cell::RefCell, collections::HashMap};
+
+    #[test]
+    fn only_displayless_ssh_clients_delegate_url_opening_to_the_host_terminal() {
+        assert!(delegates_url_open(true, false, false));
+        assert!(!delegates_url_open(true, true, false));
+        assert!(!delegates_url_open(true, false, true));
+        assert!(!delegates_url_open(false, false, false));
+        assert!(!delegates_url_open(false, true, false));
+    }
 
     fn env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

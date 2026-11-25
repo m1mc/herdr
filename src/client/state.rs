@@ -565,8 +565,13 @@ impl ClientState {
             frame: mut frame_data,
             graphics,
         } = frame_data.into();
-        if self.shell.is_some() && self.shell_mouse_capture_preference {
+        if self.shell.is_some()
+            && self.shell_mouse_capture_preference
+            && !crate::platform::host_terminal_must_open_urls()
+        {
             // Keep link metadata in the shell; omit host destinations while Herdr owns clicks.
+            // A display-less SSH client cannot open URLs itself, so it keeps the OSC 8
+            // destinations and lets the host terminal (e.g. Rootshell) open them.
             frame_data.hyperlinks.clear();
         }
         let frame_data = if self.draw_host_cursor {

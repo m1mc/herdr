@@ -2797,6 +2797,11 @@ fn read_clipboard_unicode_text() -> Option<String> {
     None
 }
 
+/// Opening URLs is handled locally on this platform.
+pub fn host_terminal_must_open_urls() -> bool {
+    false
+}
+
 pub fn open_url(url: &str) -> std::io::Result<Option<std::process::Child>> {
     let operation = wide_null("open");
     let url = wide_null(url);
