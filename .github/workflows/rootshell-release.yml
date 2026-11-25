@@ -50,8 +50,10 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-2022
             name: herdr-windows-x86_64.zip
+          # windows-latest moved to MSVC 14.52, whose STL requires a newer Clang
+          # than the one bundled with Zig 0.16.0; cross-build on windows-2022.
           - target: aarch64-pc-windows-msvc
-            os: windows-latest
+            os: windows-2022
             name: herdr-windows-aarch64.zip
 
     steps:
