@@ -193,8 +193,7 @@ impl ClientShellState {
             }
             let target_active =
                 self.notification_target_is_active(&pending.endpoint_id, &pending.event);
-            let suppress_external = target_active && self.outer_focused != Some(false)
-                && pending.event.kind != SemanticNotificationKind::Custom;
+            let suppress_external = target_active && self.outer_focused != Some(false);
             // While the target pane is visible and focused, Finished or soundless
             // notifications must not emit local sound or a visual bell.
             let suppress_active_target_alert = (pending.event.kind
