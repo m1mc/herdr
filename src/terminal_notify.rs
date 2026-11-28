@@ -32,6 +32,21 @@ pub fn detect_backend() -> Option<TerminalNotificationBackend> {
 }
 
 pub fn show_notification(title: &str, body: Option<&str>) -> io::Result<bool> {
+    show_notification_with_activation(title, body, None)
+}
+
+/// Whether the host terminal tells herdr which of its notifications was clicked.
+pub fn backend_reports_activation() -> bool {
+    detect_backend() == Some(TerminalNotificationBackend::Kitty)
+}
+
+/// Emits a terminal notification; a terminal that reports clicks hands `activation`
+/// back as [`parse_notification_activation_report`] input.
+pub fn show_notification_with_activation(
+    title: &str,
+    body: Option<&str>,
+    activation: Option<&str>,
+) -> io::Result<bool> {
     let Some(backend) = detect_backend() else {
         return Ok(false);
     };
@@ -40,7 +55,12 @@ pub fn show_notification(title: &str, body: Option<&str>) -> io::Result<bool> {
         TerminalNotificationBackend::Ghostty
         | TerminalNotificationBackend::Iterm2
         | TerminalNotificationBackend::WezTerm => build_osc9_notification(title, body),
-        TerminalNotificationBackend::Kitty => build_osc99_notification(title, body),
+        TerminalNotificationBackend::Kitty => {
+            match activation.filter(|token| is_osc99_identifier(token)) {
+                Some(token) => build_reporting_osc99_notification(title, body, token),
+                None => build_osc99_notification(title, body),
+            }
+        }
     };
 
     let sequence = if std::env::var_os("TMUX").is_some() {
@@ -65,8 +85,16 @@ pub fn split_message(message: &str) -> (&str, Option<&str>) {
 fn build_osc9_notification(title: &str, body: Option<&str>) -> Vec<u8> {
     let title_clean = sanitize_text(title);
     let title_clean = title_clean.trim();
-    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
-    let message = match body.map(sanitize_text).map(|b| b.trim().to_string()).filter(|b| !b.is_empty()) {
+    let title_text = if title_clean.is_empty() {
+        "Herdr"
+    } else {
+        title_clean
+    };
+    let message = match body
+        .map(sanitize_text)
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+    {
         Some(b) => format!("{title_text}: {b}"),
         None => title_text.to_string(),
     };
@@ -76,17 +104,72 @@ fn build_osc9_notification(title: &str, body: Option<&str>) -> Vec<u8> {
 fn build_osc99_notification(title: &str, body: Option<&str>) -> Vec<u8> {
     let title_clean = sanitize_text(title);
     let title_clean = title_clean.trim();
-    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let title_text = if title_clean.is_empty() {
+        "Herdr"
+    } else {
+        title_clean
+    };
     let body_clean = body
         .map(sanitize_text)
         .map(|b| b.trim().to_string())
         .filter(|b| !b.is_empty());
     match body_clean {
-        Some(body) => {
-            format!("\x1b]99;i=1:d=0;{title_text}\x1b\\\x1b]99;i=1:p=body;{body}\x1b\\").into_bytes()
-        }
+        Some(body) => format!("\x1b]99;i=1:d=0;{title_text}\x1b\\\x1b]99;i=1:p=body;{body}\x1b\\")
+            .into_bytes(),
         _ => format!("\x1b]99;;{title_text}\x1b\\").into_bytes(),
     }
+}
+
+/// Kitty asks the terminal to focus its window and report `ESC ] 99 ; i=<token> ; ST`
+/// once the user clicks the notification.
+fn build_reporting_osc99_notification(title: &str, body: Option<&str>, token: &str) -> Vec<u8> {
+    let title_clean = sanitize_text(title);
+    let title_clean = title_clean.trim();
+    let title_text = if title_clean.is_empty() {
+        "Herdr"
+    } else {
+        title_clean
+    };
+    let body_clean = body
+        .map(sanitize_text)
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty());
+    match body_clean {
+        Some(body) => format!(
+            "\x1b]99;i={token}:a=focus,report:d=0;{title_text}\x1b\\\x1b]99;i={token}:p=body;{body}\x1b\\"
+        )
+        .into_bytes(),
+        None => format!("\x1b]99;i={token}:a=focus,report;{title_text}\x1b\\").into_bytes(),
+    }
+}
+
+fn is_osc99_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'+' | b'.'))
+}
+
+/// Parses a kitty activation report, `ESC ] 99 ; i=<token> ; [button] ST`. Close and
+/// liveness reports carry a `p=` key and are not clicks.
+pub(crate) fn parse_notification_activation_report(sequence: &str) -> Option<String> {
+    let rest = sequence.strip_prefix("\x1b]99;")?;
+    let rest = rest
+        .strip_suffix("\x1b\\")
+        .or_else(|| rest.strip_suffix('\x07'))?;
+    let (metadata, payload) = rest.split_once(';')?;
+    if !payload.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let mut token = None;
+    for field in metadata.split(':') {
+        match field.split_once('=') {
+            Some(("i", value)) if is_osc99_identifier(value) => token = Some(value),
+            Some(("p", _)) => return None,
+            _ => {}
+        }
+    }
+    token.map(str::to_owned)
 }
 
 fn sanitize_text(text: impl AsRef<str>) -> String {
@@ -141,6 +224,55 @@ mod tests {
             .expect("utf8");
         assert!(sequence.contains("]99;i=1:d=0;pi finished"));
         assert!(sequence.contains("]99;i=1:p=body;ws · 1"));
+    }
+
+    #[test]
+    fn reporting_kitty_notification_requests_focus_and_report() {
+        let sequence = String::from_utf8(build_reporting_osc99_notification(
+            "pi finished",
+            Some("ws · 1"),
+            "0af3",
+        ))
+        .expect("utf8");
+        assert_eq!(
+            sequence,
+            "\x1b]99;i=0af3:a=focus,report:d=0;pi finished\x1b\\\x1b]99;i=0af3:p=body;ws · 1\x1b\\"
+        );
+        let sequence = String::from_utf8(build_reporting_osc99_notification("done", None, "0af3"))
+            .expect("utf8");
+        assert_eq!(sequence, "\x1b]99;i=0af3:a=focus,report;done\x1b\\");
+    }
+
+    #[test]
+    fn activation_report_yields_token_for_clicks_only() {
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;i=0af3;\x1b\\").as_deref(),
+            Some("0af3")
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;i=0af3;2\x07").as_deref(),
+            Some("0af3")
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;i=0af3:p=close;\x1b\\"),
+            None
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;i=0af3:p=alive;1,2\x1b\\"),
+            None
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;;\x1b\\"),
+            None
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]99;i=a;b;\x1b\\"),
+            None
+        );
+        assert_eq!(
+            parse_notification_activation_report("\x1b]9;i=0af3;\x1b\\"),
+            None
+        );
     }
 
     #[test]

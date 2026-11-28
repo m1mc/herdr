@@ -1239,6 +1239,28 @@ async fn run_client_loop(
                     }
                 }
             }
+            #[cfg(unix)]
+            ClientLoopEvent::NotificationTokenActivated(token) => {
+                if let Some(shell) = state.shell.as_mut() {
+                    let outcome = shell.activate_notification_token(&token);
+                    let frame = outcome
+                        .repaint
+                        .then(|| shell.compose(state.reported_size.0, state.reported_size.1))
+                        .flatten();
+                    if finish_client_shell_input(
+                        &mut state,
+                        outcome,
+                        frame,
+                        &mut write_stream,
+                        &mut pending_activation,
+                        &mut endpoint_commands,
+                        &mut prefix_input_source,
+                        &mut scheduled_activation,
+                    )? {
+                        return Ok(());
+                    }
+                }
+            }
             ClientLoopEvent::TerminalUnavailable(err) => {
                 info!(err = %err, "client terminal unavailable; detaching");
                 let _ = write_to_server(&mut write_stream, &ClientMessage::Detach);
@@ -1820,12 +1842,14 @@ async fn run_client_loop(
                             if let Some(frame) = frame {
                                 state.present_frame(frame);
                             }
-                            handle_shell_notification_effects(
+                            let armed = handle_shell_notification_effects(
                                 effects,
                                 &state.sound_config,
-                                #[cfg(windows)]
                                 &event_tx,
                             );
+                            if let Some(shell) = state.shell.as_mut() {
+                                shell.arm_focus_activations(armed);
+                            }
                         }
                     }
                     ServerMessage::ClientShellError { message } => {
@@ -2349,12 +2373,11 @@ async fn run_client_loop(
                         &mut scheduled_activation,
                     );
                     // Deliver this tick's alerts even if finishing the input failed.
-                    handle_shell_notification_effects(
-                        effects,
-                        &state.sound_config,
-                        #[cfg(windows)]
-                        &event_tx,
-                    );
+                    let armed =
+                        handle_shell_notification_effects(effects, &state.sound_config, &event_tx);
+                    if let Some(shell) = state.shell.as_mut() {
+                        shell.arm_focus_activations(armed);
+                    }
                     if finished? {
                         return Ok(());
                     }

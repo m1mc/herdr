@@ -982,6 +982,132 @@ fn bytes_match_image_signature(extension: &str, bytes: &[u8]) -> bool {
     }
 }
 
+/// Whether `program` resolves to an executable file on `PATH`.
+fn executable_on_path(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::env::var_os("PATH").is_some_and(|path| {
+        std::env::split_paths(&path).any(|dir| {
+            std::fs::metadata(dir.join(program))
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })
+    })
+}
+
+/// Runs when the user clicks a clickable desktop notification.
+pub(crate) type NotificationClick = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+/// notify-send waits for each clickable notification; older waits are ended past this.
+const MAX_WAITING_NOTIFICATIONS: usize = 8;
+
+/// Whether [`show_clickable_desktop_notification`] can report a click here.
+pub(crate) fn clickable_desktop_notifications_available() -> bool {
+    static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        (std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some())
+            && executable_on_path("notify-send")
+    })
+}
+
+/// Shows a notification whose click (its default action) runs `on_click`; `Ok(false)`
+/// means there is no graphical session or notify-send to report the click.
+pub(crate) fn show_clickable_desktop_notification(
+    title: &str,
+    body: Option<&str>,
+    on_click: NotificationClick,
+) -> std::io::Result<bool> {
+    // The desktop raises the app named by `desktop-entry` when its notification is
+    // clicked; on Wayland that is the only way to bring the terminal to the front.
+    // Terminals that show their own notifications never reach this path.
+    let desktop_entry = std::env::var_os("GNOME_TERMINAL_SCREEN")
+        .is_some()
+        .then_some("org.gnome.Terminal");
+    if !clickable_desktop_notifications_available() {
+        return Ok(false);
+    }
+    let title = title.to_owned();
+    let body = body.map(str::to_owned);
+    // PR_SET_PDEATHSIG fires when the spawning *thread* exits, so the thread that
+    // spawns notify-send is the one that waits for it.
+    std::thread::Builder::new()
+        .name("herdr-notify-wait".into())
+        .spawn(move || {
+            let mut cmd = Command::new("notify-send");
+            build_clickable_notify_send_command(&mut cmd, &title, body.as_deref(), desktop_entry);
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            // A waiting notify-send must not outlive the client that acts on its click.
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.pre_exec(|| {
+                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                    Ok(())
+                });
+            }
+            let mut child = match cmd.spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    tracing::warn!(err = %err, "failed to spawn notify-send");
+                    return;
+                }
+            };
+            let pid = child.id();
+            let evicted = {
+                let mut waiting = lock_waiting_notifications();
+                waiting.push_back(pid);
+                (waiting.len() > MAX_WAITING_NOTIFICATIONS)
+                    .then(|| waiting.pop_front())
+                    .flatten()
+            };
+            if let Some(evicted) = evicted {
+                unsafe {
+                    libc::kill(evicted as i32, libc::SIGTERM);
+                }
+            }
+            use std::io::Read;
+            let mut output = String::new();
+            if let Some(mut stdout) = child.stdout.take() {
+                let _ = stdout.read_to_string(&mut output);
+            }
+            let _ = child.wait();
+            lock_waiting_notifications().retain(|waiting| *waiting != pid);
+            if output.lines().any(|line| line.trim() == "default") {
+                on_click();
+            }
+        })?;
+    Ok(true)
+}
+
+fn lock_waiting_notifications() -> std::sync::MutexGuard<'static, std::collections::VecDeque<u32>> {
+    static WAITING: std::sync::Mutex<std::collections::VecDeque<u32>> =
+        std::sync::Mutex::new(std::collections::VecDeque::new());
+    WAITING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn build_clickable_notify_send_command(
+    cmd: &mut Command,
+    title: &str,
+    body: Option<&str>,
+    desktop_entry: Option<&str>,
+) {
+    let title = title.trim();
+    let title = if title.is_empty() { "Herdr" } else { title };
+    cmd.arg("--app-name")
+        .arg("Herdr")
+        .arg("--action=default=Open")
+        .arg("--wait");
+    if let Some(entry) = desktop_entry {
+        cmd.arg("--hint")
+            .arg(format!("string:desktop-entry:{entry}"));
+    }
+    cmd.arg("--").arg(title);
+    if let Some(body) = body.map(str::trim).filter(|body| !body.is_empty()) {
+        cmd.arg(body);
+    }
+}
+
 /// Show a native desktop notification through libnotify's command-line helper.
 pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Result<bool> {
     show_desktop_notification_with_command(title, body, |program| Command::new(program))
@@ -1255,6 +1381,52 @@ mod tests {
     use super::*;
     use std::sync::{Mutex, OnceLock};
     use std::{cell::RefCell, collections::HashMap};
+
+    #[test]
+    fn clickable_notify_send_waits_for_the_default_action() {
+        let mut cmd = Command::new("notify-send");
+        build_clickable_notify_send_command(
+            &mut cmd,
+            " done ",
+            Some(" ws 1 "),
+            Some("org.gnome.Terminal"),
+        );
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "--app-name",
+                "Herdr",
+                "--action=default=Open",
+                "--wait",
+                "--hint",
+                "string:desktop-entry:org.gnome.Terminal",
+                "--",
+                "done",
+                "ws 1",
+            ]
+        );
+        let mut cmd = Command::new("notify-send");
+        build_clickable_notify_send_command(&mut cmd, "  ", None, None);
+        let args: Vec<_> = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            [
+                "--app-name",
+                "Herdr",
+                "--action=default=Open",
+                "--wait",
+                "--",
+                "Herdr"
+            ]
+        );
+    }
 
     #[test]
     fn only_displayless_ssh_clients_delegate_url_opening_to_the_host_terminal() {

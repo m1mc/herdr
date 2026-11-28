@@ -278,6 +278,21 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
     None
 }
 
+/// Runs when the user clicks a clickable desktop notification.
+pub(crate) type NotificationClick = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+pub(crate) fn clickable_desktop_notifications_available() -> bool {
+    false
+}
+
+pub(crate) fn show_clickable_desktop_notification(
+    _title: &str,
+    _body: Option<&str>,
+    _on_click: NotificationClick,
+) -> std::io::Result<bool> {
+    Ok(false)
+}
+
 /// Unsupported platform stub.
 pub fn show_desktop_notification(_title: &str, _body: Option<&str>) -> std::io::Result<bool> {
     Ok(false)

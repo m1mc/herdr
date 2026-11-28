@@ -174,6 +174,163 @@ fn workspace_navigation_waits_for_the_target_presentation_fence() {
     }
 }
 
+fn terminal_notification(
+    state: &mut ClientShellState,
+    endpoint_id: &ClientEndpointId,
+) -> ClientNotificationActivation {
+    let (effects, _) = state.receive_notification(
+        endpoint_id,
+        SemanticNotification {
+            kind: SemanticNotificationKind::Custom,
+            title: "test".into(),
+            body: None,
+            sound: None,
+            agent: None,
+            workspace_id: Some("ws_1".into()),
+            tab_id: Some("tab_1".into()),
+            pane_id: Some("pane_1".into()),
+            position: None,
+        },
+        std::time::Instant::now(),
+    );
+    let [ClientShellNotificationEffect::Terminal {
+        activation: Some(activation),
+        ..
+    }] = effects.as_slice()
+    else {
+        panic!(
+            "terminal effect must carry an activation: {:?}",
+            effects.len()
+        );
+    };
+    activation.clone()
+}
+
+fn terminal_notification_state() -> (ClientShellState, ClientEndpointId) {
+    let (mut state, remote) = state_with_remote();
+    state.config.toast_delivery = crate::config::ToastDelivery::Terminal;
+    state.config.toast_delay_seconds = 0;
+    state.outer_focused = Some(false);
+    (state, remote)
+}
+
+#[test]
+fn terminal_notification_click_token_returns_to_the_raising_pane_once() {
+    let (mut state, remote) = terminal_notification_state();
+    for endpoint_id in [ClientEndpointId::Local, remote.clone()] {
+        let activation = terminal_notification(&mut state, &endpoint_id);
+        assert_eq!(activation.target.endpoint_id, endpoint_id);
+        assert_eq!(activation.target.pane_id, "pane_1");
+        assert_eq!(activation.token.len(), 32);
+        let outcome = state.activate_notification_token(&activation.token);
+        assert!(!outcome.actions.is_empty(), "a click must navigate");
+        if endpoint_id == remote {
+            assert!(
+                matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint {
+                endpoint_id: id, target: Some(ClientEndpointFocusTarget::Notification { pane_id, boot_id }),
+            }] if id == &remote && pane_id == "pane_1" && boot_id == "remote-boot")
+            );
+        }
+        assert!(
+            state
+                .activate_notification_token(&activation.token)
+                .actions
+                .is_empty(),
+            "a token is spent by its first click"
+        );
+    }
+    assert!(state
+        .activate_notification_token("not-a-token")
+        .actions
+        .is_empty());
+}
+
+#[test]
+fn terminal_notification_tokens_are_unique_and_bounded() {
+    let (mut state, _) = terminal_notification_state();
+    let first = terminal_notification(&mut state, &ClientEndpointId::Local);
+    let mut tokens = std::collections::HashSet::new();
+    tokens.insert(first.token.clone());
+    for _ in 0..64 {
+        let activation = terminal_notification(&mut state, &ClientEndpointId::Local);
+        assert!(tokens.insert(activation.token), "tokens must not repeat");
+    }
+    assert_eq!(state.notification_activations.len(), 64);
+    assert!(
+        state
+            .activate_notification_token(&first.token)
+            .actions
+            .is_empty(),
+        "the oldest activation is dropped first"
+    );
+}
+
+#[test]
+fn terminal_notification_click_ignores_a_restarted_target() {
+    let (mut state, remote) = terminal_notification_state();
+    let activation = terminal_notification(&mut state, &remote);
+    let endpoint = state
+        .endpoints
+        .iter_mut()
+        .find(|endpoint| endpoint.endpoint_id == remote)
+        .unwrap();
+    endpoint.snapshot.as_mut().unwrap().boot_id = "replacement-boot".into();
+    assert!(state
+        .activate_notification_token(&activation.token)
+        .actions
+        .is_empty());
+}
+
+#[test]
+fn reported_click_reaches_the_pane_through_raw_input() {
+    let (mut state, remote) = terminal_notification_state();
+    let activation = terminal_notification(&mut state, &remote);
+    let outcome = state.handle_raw_events(vec![RawInputEvent::NotificationActivated(
+        activation.token.clone(),
+    )]);
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, .. }] if endpoint_id == &remote)
+    );
+}
+
+#[test]
+fn unreported_click_focuses_the_latest_pane_when_herdr_regains_focus() {
+    let (mut state, remote) = terminal_notification_state();
+    let local = terminal_notification(&mut state, &ClientEndpointId::Local);
+    let latest = terminal_notification(&mut state, &remote);
+    state.arm_focus_activations(vec![local.token, latest.token]);
+    let outcome = state.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
+    assert!(
+        matches!(&outcome.actions[..], [ClientShellAction::ActivateEndpoint { endpoint_id, .. }] if endpoint_id == &remote)
+    );
+    state.outer_focused = Some(false);
+    let outcome = state.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
+    assert!(outcome.actions.is_empty(), "the armed jump happens once");
+}
+
+#[test]
+fn focus_jump_is_not_armed_while_focused_and_input_disarms_it() {
+    let (mut state, remote) = terminal_notification_state();
+    let activation = terminal_notification(&mut state, &remote);
+    state.outer_focused = Some(true);
+    state.arm_focus_activations(vec![activation.token.clone()]);
+    assert!(state.focus_armed_activation.is_none());
+
+    state.outer_focused = Some(false);
+    state.arm_focus_activations(vec![activation.token]);
+    assert!(state.focus_armed_activation.is_some());
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 0,
+        row: 0,
+        modifiers: KeyModifiers::NONE,
+    })]);
+    assert!(
+        state.focus_armed_activation.is_none(),
+        "input proves the user is already here"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn system_notification_clicks_keep_endpoint_and_boot_identity() {
@@ -960,13 +1117,13 @@ fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
         .find(|hit| hit.endpoint_id == remote_id && hit.workspace_id == "remote_ws_2")
         .expect("visible remote worktree child")
         .rect;
-    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: remote_parent.x + 3,
         row: remote_parent.y,
         modifiers: KeyModifiers::empty(),
     })]);
-    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Drag(MouseButton::Left),
         column: remote_child.x + 3,
         row: remote_child.bottom(),
@@ -990,7 +1147,7 @@ fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
         .and_then(|hit| hit.group_toggle.as_ref())
         .expect("remote worktree group marker")
         .0;
-    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: remote_toggle.x,
         row: remote_toggle.y,
@@ -1011,7 +1168,7 @@ fn saved_machine_preserves_endpoint_scoped_worktree_collapses() {
         .and_then(|hit| hit.group_toggle.as_ref())
         .expect("collapsed local group marker")
         .0;
-    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: local_toggle.x,
         row: local_toggle.y,

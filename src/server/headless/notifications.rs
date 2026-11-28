@@ -104,13 +104,18 @@ impl HeadlessServer {
                 agent,
                 workspace_id: Some(workspace_id),
                 tab_id: Some(tab_id),
-                pane_id: Some(public_pane_id),
+                pane_id: Some(public_pane_id.clone()),
                 position: None,
             });
 
         let sent = self.dispatch_agent_semantic_notification(pane_id, notification_msg);
         if !sent {
-            crate::rootshell_notify::send_push_notification(&title, body.as_deref(), kind.into());
+            crate::rootshell_notify::send_push_notification(
+                &title,
+                body.as_deref(),
+                kind.into(),
+                Some(&public_pane_id),
+            );
         }
         sent
     }
@@ -338,7 +343,7 @@ impl HeadlessServer {
                 agent: None,
                 workspace_id: None,
                 tab_id: None,
-                pane_id: params.pane_id,
+                pane_id: params.pane_id.clone(),
                 position: params.position,
             });
         // An explicit `notification show` is a request from the user, so every attached
@@ -352,6 +357,7 @@ impl HeadlessServer {
                 &title,
                 body.as_deref(),
                 crate::rootshell_notify::PushStatus::Info,
+                params.pane_id.as_deref(),
             );
         }
         notification_show_result(

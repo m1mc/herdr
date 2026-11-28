@@ -91,6 +91,8 @@ pub enum RawInputEvent {
         colors: Vec<(u8, RgbColor)>,
     },
     HostColorSchemeChanged(HostAppearance),
+    /// The host terminal reported a click on a notification herdr raised.
+    NotificationActivated(String),
     // The dimensions are only read by the Unix client.
     #[cfg_attr(not(any(unix, test)), allow(dead_code))]
     HostCellSizeReport {
@@ -1039,6 +1041,10 @@ fn extract_one_event(buffer: &[u8]) -> Option<(RawInputEvent, usize)> {
                 },
                 seq_len,
             ));
+        }
+
+        if let Some(token) = crate::terminal_notify::parse_notification_activation_report(seq) {
+            return Some((RawInputEvent::NotificationActivated(token), seq_len));
         }
 
         match seq {
@@ -3003,6 +3009,32 @@ mod tests {
                 }
             }
         ));
+    }
+
+    #[test]
+    fn parses_kitty_notification_activation_report() {
+        let events = parse_raw_input_bytes_sync(b"\x1b]99;i=0af3;\x1b\\a");
+        assert!(
+            matches!(&events[..], [RawInputEvent::NotificationActivated(token), _] if token == "0af3"),
+            "{events:?}"
+        );
+        let events = parse_raw_input_bytes_sync(b"\x1b]99;i=0af3:p=close;\x1b\\");
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, RawInputEvent::NotificationActivated(_))),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn raw_input_framer_reassembles_split_notification_activation_report() {
+        let mut framer = RawInputFramer::default();
+        assert!(framer.push(b"\x1b]99;i=0a").is_empty());
+        let events = framer.push(b"f3;\x1b\\");
+        assert!(
+            matches!(&events[..], [RawInputEvent::NotificationActivated(token)] if token == "0af3")
+        );
     }
 
     #[test]

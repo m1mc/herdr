@@ -87,9 +87,19 @@ pub(crate) fn find_rootshell_notify() -> Option<PathBuf> {
 }
 
 /// Dispatches an asynchronous push notification via rootshell-notify in the background.
-pub(crate) fn send_push_notification(title: &str, body: Option<&str>, status: PushStatus) {
+///
+/// `pane` is the public id of the local pane that raised it. rootshell-notify reads
+/// `HERDR_PANE_ID` and `HERDR_SOCKET_PATH` to attach a Herdr route, which lets the
+/// Rootshell app open that pane when the push is tapped.
+pub(crate) fn send_push_notification(
+    title: &str,
+    body: Option<&str>,
+    status: PushStatus,
+    pane: Option<&str>,
+) {
     let title = title.to_string();
     let body = body.map(str::to_string);
+    let route = pane.map(|pane| (pane.to_string(), crate::api::socket_path()));
 
     std::thread::spawn(move || {
         let Some(bin) = find_rootshell_notify() else {
@@ -106,6 +116,12 @@ pub(crate) fn send_push_notification(title: &str, body: Option<&str>, status: Pu
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        set_pane_route(
+            &mut cmd,
+            route
+                .as_ref()
+                .map(|(pane, socket)| (pane.as_str(), socket.as_path())),
+        );
 
         if let Some(b) = &body {
             let trimmed = b.trim();
@@ -130,9 +146,67 @@ pub(crate) fn send_push_notification(title: &str, body: Option<&str>, status: Pu
     });
 }
 
+/// Points rootshell-notify at the pane that raised the push, or clears the route.
+fn set_pane_route(cmd: &mut std::process::Command, route: Option<(&str, &std::path::Path)>) {
+    match route {
+        Some((pane, socket)) => {
+            cmd.env("HERDR_PANE_ID", pane)
+                .env("HERDR_SOCKET_PATH", socket);
+        }
+        // An inherited pane id would route the push to whatever pane started this process.
+        None => {
+            cmd.env_remove("HERDR_PANE_ID")
+                .env_remove("HERDR_SOCKET_PATH");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn route_env(cmd: &std::process::Command) -> Vec<(String, Option<String>)> {
+        let mut env: Vec<_> = cmd
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        env.sort();
+        env
+    }
+
+    #[test]
+    fn push_routes_to_the_raising_pane_and_never_an_inherited_one() {
+        let mut cmd = std::process::Command::new("rootshell-notify");
+        set_pane_route(
+            &mut cmd,
+            Some(("w1:p2", std::path::Path::new("/run/herdr.sock"))),
+        );
+        assert_eq!(
+            route_env(&cmd),
+            [
+                ("HERDR_PANE_ID".to_owned(), Some("w1:p2".to_owned())),
+                (
+                    "HERDR_SOCKET_PATH".to_owned(),
+                    Some("/run/herdr.sock".to_owned())
+                ),
+            ]
+        );
+
+        let mut cmd = std::process::Command::new("rootshell-notify");
+        set_pane_route(&mut cmd, None);
+        assert_eq!(
+            route_env(&cmd),
+            [
+                ("HERDR_PANE_ID".to_owned(), None),
+                ("HERDR_SOCKET_PATH".to_owned(), None),
+            ]
+        );
+    }
 
     #[test]
     fn find_rootshell_notify_respects_missing_config() {

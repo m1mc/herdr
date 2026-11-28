@@ -234,6 +234,16 @@ impl ClientShellState {
                 },
                 other => other,
             };
+            if matches!(
+                event,
+                RawInputEvent::Key(_)
+                    | RawInputEvent::Text(_)
+                    | RawInputEvent::Paste(_)
+                    | RawInputEvent::Mouse(_)
+            ) {
+                // Input proves the user is already here; a later focus change is not a return.
+                self.focus_armed_activation = None;
+            }
             if self.handle_machine_badge_event(&event, &mut outcome) {
                 continue;
             }
@@ -313,7 +323,17 @@ impl ClientShellState {
                     }
                 }
                 RawInputEvent::Mouse(mouse) => self.handle_mouse(mouse, &mut outcome),
+                RawInputEvent::NotificationActivated(token) => {
+                    let activation = self.activate_notification_token(&token);
+                    outcome.repaint |= activation.repaint;
+                    outcome.actions.extend(activation.actions);
+                }
                 RawInputEvent::OuterFocusGained => {
+                    if let Some(target) = self.focus_armed_activation.take() {
+                        let activation = self.activate_system_notification(target);
+                        outcome.repaint |= activation.repaint;
+                        outcome.actions.extend(activation.actions);
+                    }
                     self.outer_focused = Some(true);
                     outcome.query_host_appearance = true;
                     outcome.repaint |= self.config.redraw_on_focus_gained;

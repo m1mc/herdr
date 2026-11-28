@@ -755,6 +755,24 @@ fn show_terminal_notifier_notification(
     )
 }
 
+/// Runs when the user clicks a clickable desktop notification.
+pub(crate) type NotificationClick = std::sync::Arc<dyn Fn() + Send + Sync>;
+
+/// macOS terminals show their own notifications through OSC 9 or OSC 99, and
+/// terminal-notifier banners depend on a separate per-app permission, so terminal
+/// toasts never fall back to a clickable desktop notification here.
+pub(crate) fn clickable_desktop_notifications_available() -> bool {
+    false
+}
+
+pub(crate) fn show_clickable_desktop_notification(
+    _title: &str,
+    _body: Option<&str>,
+    _on_click: NotificationClick,
+) -> std::io::Result<bool> {
+    Ok(false)
+}
+
 fn show_terminal_notifier_notification_with_options(
     title: &str,
     body: Option<&str>,
@@ -773,7 +791,11 @@ fn build_terminal_notifier_command(
     activate_bundle_id: Option<&str>,
 ) {
     let title_clean = title.trim();
-    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let title_text = if title_clean.is_empty() {
+        "Herdr"
+    } else {
+        title_clean
+    };
     let message_text = match body {
         Some(b) if !b.trim().is_empty() => b.trim(),
         _ => title_text,
@@ -791,7 +813,11 @@ fn show_osascript_notification(
     command: &mut impl FnMut(&str) -> Command,
 ) -> std::io::Result<bool> {
     let title_clean = title.trim();
-    let title_text = if title_clean.is_empty() { "Herdr" } else { title_clean };
+    let title_text = if title_clean.is_empty() {
+        "Herdr"
+    } else {
+        title_clean
+    };
     let message_text = match body {
         Some(b) if !b.trim().is_empty() => b.trim(),
         _ => title_text,

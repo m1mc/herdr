@@ -1,6 +1,7 @@
 use super::*;
 
 const MAX_QUEUED_NOTIFICATIONS: usize = 8;
+const MAX_NOTIFICATION_ACTIVATIONS: usize = 64;
 const COMPLETION_EVIDENCE_GRACE: std::time::Duration = std::time::Duration::from_secs(1);
 pub(super) const COMPLETION_RECHECK_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(50);
@@ -10,6 +11,20 @@ enum NotificationValidation {
     Current,
     AwaitingSnapshot,
     Stale,
+}
+
+fn notification_activation_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // RandomState keys come from the OS RNG, so tokens are not guessable across processes.
+    let word = |salt: u64| {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(count);
+        hasher.write_u64(salt);
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", word(0), word(1))
 }
 
 fn notification_duration(kind: SemanticNotificationKind) -> std::time::Duration {
@@ -225,20 +240,21 @@ impl ClientShellState {
                 self.config.toast_delivery.includes_terminal() && !suppress_external;
             let show_system = self.config.toast_delivery.includes_system() && !suppress_external;
 
-            #[cfg(windows)]
-            let system_target = if show_system {
-                pending.event.pane_id.as_ref().and_then(|pane_id| {
-                    self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
-                        ClientSystemNotificationTarget {
-                            endpoint_id: pending.endpoint_id.clone(),
-                            boot_id: boot_id.to_owned(),
-                            pane_id: pane_id.clone(),
-                        }
+            let notification_target = (show_terminal || show_system)
+                .then(|| {
+                    pending.event.pane_id.as_ref().and_then(|pane_id| {
+                        self.endpoint_boot_id(&pending.endpoint_id).map(|boot_id| {
+                            ClientSystemNotificationTarget {
+                                endpoint_id: pending.endpoint_id.clone(),
+                                boot_id: boot_id.to_owned(),
+                                pane_id: pane_id.clone(),
+                            }
+                        })
                     })
                 })
-            } else {
-                None
-            };
+                .flatten();
+            #[cfg(windows)]
+            let system_target = notification_target.clone().filter(|_| show_system);
 
             if show_herdr {
                 self.queue_visible_notification(
@@ -253,9 +269,13 @@ impl ClientShellState {
             }
 
             if show_terminal {
+                let activation = notification_target
+                    .clone()
+                    .map(|target| self.register_notification_activation(target));
                 effects.push(ClientShellNotificationEffect::Terminal {
                     title: pending.event.title.clone(),
                     body: pending.event.body.clone(),
+                    activation,
                 });
             }
             if show_system {
@@ -270,7 +290,6 @@ impl ClientShellState {
         (effects, repaint)
     }
 
-    #[cfg(windows)]
     pub(crate) fn notification_target_is_current(
         &self,
         endpoint_id: &ClientEndpointId,
@@ -291,7 +310,55 @@ impl ClientShellState {
                 })
     }
 
-    #[cfg(windows)]
+    fn register_notification_activation(
+        &mut self,
+        target: ClientSystemNotificationTarget,
+    ) -> ClientNotificationActivation {
+        if self.notification_activations.len() == MAX_NOTIFICATION_ACTIVATIONS {
+            self.notification_activations.pop_front();
+        }
+        let activation = ClientNotificationActivation {
+            token: notification_activation_token(),
+            target,
+        };
+        self.notification_activations.push_back(activation.clone());
+        activation
+    }
+
+    /// Resolves a token that a notification channel handed back after a click.
+    pub(crate) fn activate_notification_token(&mut self, token: &str) -> ClientShellInput {
+        let Some(index) = self
+            .notification_activations
+            .iter()
+            .position(|activation| activation.token == token)
+        else {
+            return ClientShellInput::default();
+        };
+        let Some(activation) = self.notification_activations.remove(index) else {
+            return ClientShellInput::default();
+        };
+        self.activate_system_notification(activation.target)
+    }
+
+    /// Channels that cannot report a click (a terminal's own OSC 9 toast, a Rootshell
+    /// push) only bring the terminal back. When one is shown while herdr is out of
+    /// focus, the pane that raised the latest one is focused on the next focus gain.
+    pub(crate) fn arm_focus_activations(&mut self, tokens: Vec<String>) {
+        let Some(token) = tokens.last() else {
+            return;
+        };
+        if self.outer_focused != Some(false) {
+            return;
+        }
+        if let Some(activation) = self
+            .notification_activations
+            .iter()
+            .find(|activation| &activation.token == token)
+        {
+            self.focus_armed_activation = Some(activation.target.clone());
+        }
+    }
+
     pub(crate) fn activate_system_notification(
         &mut self,
         target: ClientSystemNotificationTarget,

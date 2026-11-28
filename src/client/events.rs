@@ -12,6 +12,9 @@ pub(super) enum ClientLoopEvent {
     StdinEvents(Vec<crate::protocol::ClientInputEvent>),
     #[cfg(windows)]
     NotificationActivated(shell::ClientSystemNotificationTarget),
+    /// A desktop notifier reported a click on the notification issued with this token.
+    #[cfg(unix)]
+    NotificationTokenActivated(String),
     Resize(u16, u16, u32, u32, bool),
     TerminalUnavailable(io::Error),
     ServerMessage {

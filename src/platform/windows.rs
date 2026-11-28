@@ -21,6 +21,11 @@ pub(crate) use notifications::{
     show_actionable_desktop_notification, show_desktop_notification,
 };
 
+/// Native toasts report clicks through their activation callback.
+pub(crate) fn clickable_desktop_notifications_available() -> bool {
+    true
+}
+
 static ALLOW_UNELEVATED_CLIENTS: OnceLock<bool> = OnceLock::new();
 
 pub(crate) fn allow_unelevated_clients() {

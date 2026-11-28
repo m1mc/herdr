@@ -41,13 +41,23 @@ fn queue_system_notification(
 }
 
 #[cfg(not(windows))]
-type DesktopNotification = (String, Option<String>);
+enum DesktopNotification {
+    Plain {
+        title: String,
+        body: Option<String>,
+    },
+    Clickable {
+        title: String,
+        body: Option<String>,
+        on_click: crate::platform::NotificationClick,
+    },
+}
 
 /// Hands desktop notifications to one long-lived worker so their external notifier
 /// commands (often hundreds of milliseconds each) never stall the client loop, run in
 /// arrival order, and cannot pile up unbounded behind a slow notifier.
 #[cfg(not(windows))]
-fn queue_desktop_notification(title: String, body: Option<String>) {
+fn queue_desktop_notification(notification: DesktopNotification) {
     const QUEUE_DEPTH: usize = 16;
     static QUEUE: std::sync::OnceLock<Option<std::sync::mpsc::SyncSender<DesktopNotification>>> =
         std::sync::OnceLock::new();
@@ -56,10 +66,22 @@ fn queue_desktop_notification(title: String, body: Option<String>) {
         std::thread::Builder::new()
             .name("herdr-desktop-notify".into())
             .spawn(move || {
-                for (title, body) in receiver {
-                    if let Err(err) =
-                        crate::platform::show_desktop_notification(&title, body.as_deref())
-                    {
+                for notification in receiver {
+                    let result = match notification {
+                        DesktopNotification::Plain { title, body } => {
+                            crate::platform::show_desktop_notification(&title, body.as_deref())
+                        }
+                        DesktopNotification::Clickable {
+                            title,
+                            body,
+                            on_click,
+                        } => crate::platform::show_clickable_desktop_notification(
+                            &title,
+                            body.as_deref(),
+                            on_click,
+                        ),
+                    };
+                    if let Err(err) = result {
                         warn!(err = %err, "failed to emit system notification");
                     }
                 }
@@ -71,9 +93,75 @@ fn queue_desktop_notification(title: String, body: Option<String>) {
     let Some(sender) = queue else {
         return;
     };
-    if let Err(err) = sender.try_send((title, body)) {
+    if let Err(err) = sender.try_send(notification) {
         warn!(err = %err, "dropped system notification; notifier queue is full or closed");
     }
+}
+
+/// How a terminal-delivered notification reaches the user, best click path first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalNotificationRoute {
+    /// The terminal reports the click itself (kitty), locally or over SSH.
+    ReportingTerminal,
+    /// A local desktop notifier that reports the click.
+    Desktop,
+    /// A Rootshell push carrying the pane route.
+    Rootshell,
+    /// A terminal escape; herdr returns to the pane when the terminal regains focus.
+    Terminal,
+}
+
+/// What the client knows about its terminal when it delivers a terminal toast.
+#[derive(Clone, Copy, Debug, Default)]
+struct TerminalNotificationContext {
+    /// The notification names a pane the click can return to.
+    has_target: bool,
+    /// The terminal reports notification clicks back to herdr (kitty).
+    terminal_reports_clicks: bool,
+    /// The terminal shows OSC 9/99 notifications itself (Ghostty, iTerm2, WezTerm).
+    terminal_shows_notifications: bool,
+    /// The client runs over SSH or a remote endpoint.
+    remote: bool,
+    /// A local desktop notifier can report the click.
+    desktop_reports_clicks: bool,
+    /// The SSH session comes from Rootshell and rootshell-notify is configured.
+    rootshell: bool,
+}
+
+fn terminal_notification_route(context: TerminalNotificationContext) -> TerminalNotificationRoute {
+    if context.terminal_reports_clicks {
+        TerminalNotificationRoute::ReportingTerminal
+    } else if context.remote && context.rootshell {
+        // Rootshell identifies as Ghostty (`TERM=xterm-ghostty`), but its escapes
+        // are not seen while the app is in the background; only a push reaches it.
+        TerminalNotificationRoute::Rootshell
+    } else if context.terminal_shows_notifications {
+        // The user already sees these toasts; clicking one refocuses the terminal,
+        // which returns to the pane through the focus-return fallback.
+        TerminalNotificationRoute::Terminal
+    } else if !context.remote
+        && context.desktop_reports_clicks
+        && (context.has_target || cfg!(windows))
+    {
+        TerminalNotificationRoute::Desktop
+    } else {
+        TerminalNotificationRoute::Terminal
+    }
+}
+
+/// The pane a Rootshell push may route to: only the local server's panes are
+/// reachable through the socket rootshell-notify is given.
+fn rootshell_route_pane(activation: &shell::ClientNotificationActivation) -> Option<String> {
+    (activation.target.endpoint_id == super::endpoint::ClientEndpointId::Local)
+        .then(|| activation.target.pane_id.clone())
+}
+
+/// Rootshell marks the sessions it opens with `LC_ROOTSHELL_PANE` or
+/// `LC_TERMINAL=rootshell`, matching the SSH detection in `terminal_setup`.
+fn rootshell_session() -> bool {
+    (std::env::var_os("LC_ROOTSHELL_PANE").is_some()
+        || std::env::var_os("LC_TERMINAL").is_some_and(|value| value == "rootshell"))
+        && crate::rootshell_notify::find_rootshell_notify().is_some()
 }
 
 #[cfg(windows)]
@@ -85,20 +173,24 @@ fn show_untargeted_system_notification(title: &str, body: Option<&str>) -> io::R
     })
 }
 
+/// Delivers this tick's notification effects and returns the activation tokens whose
+/// channel cannot report a click, so the shell can focus their pane when herdr regains
+/// focus instead.
 pub(super) fn handle_shell_notification_effects(
     effects: Vec<shell::ClientShellNotificationEffect>,
     sound_config: &crate::config::SoundConfig,
-    #[cfg(windows)] event_tx: &tokio::sync::mpsc::Sender<super::events::ClientLoopEvent>,
-) {
+    event_tx: &tokio::sync::mpsc::Sender<super::events::ClientLoopEvent>,
+) -> Vec<String> {
+    let mut focus_activations = Vec::new();
     if effects.is_empty() {
-        return;
+        return focus_activations;
     }
 
     // In SSH/remote sessions, sound and desktop system notifications are not
     // emitted locally. They become a rootshell push instead, while terminal
     // toasts and the visual bell still render in the attached terminal.
     let is_ssh_or_remote = super::is_remote_or_ssh_session();
-    let mut ssh_system_info: Option<(String, Option<String>)> = None;
+    let mut ssh_system_info: Option<(String, Option<String>, Option<String>)> = None;
     let mut ssh_sound_status: Option<crate::rootshell_notify::PushStatus> = None;
 
     for effect in effects {
@@ -123,10 +215,77 @@ pub(super) fn handle_shell_notification_effects(
                     warn!(err = %err, "failed to emit terminal bell");
                 }
             }
-            shell::ClientShellNotificationEffect::Terminal { title, body } => {
-                if let Err(err) = crate::terminal_notify::show_notification(&title, body.as_deref())
-                {
-                    warn!(err = %err, "failed to emit terminal notification");
+            shell::ClientShellNotificationEffect::Terminal {
+                title,
+                body,
+                activation,
+            } => {
+                let route = terminal_notification_route(TerminalNotificationContext {
+                    has_target: activation.is_some(),
+                    terminal_reports_clicks: crate::terminal_notify::backend_reports_activation(),
+                    terminal_shows_notifications: crate::terminal_notify::detect_backend()
+                        .is_some(),
+                    remote: is_ssh_or_remote,
+                    desktop_reports_clicks:
+                        crate::platform::clickable_desktop_notifications_available(),
+                    rootshell: is_ssh_or_remote && rootshell_session(),
+                });
+                match route {
+                    TerminalNotificationRoute::ReportingTerminal => {
+                        if let Err(err) = crate::terminal_notify::show_notification_with_activation(
+                            &title,
+                            body.as_deref(),
+                            activation
+                                .as_ref()
+                                .map(|activation| activation.token.as_str()),
+                        ) {
+                            warn!(err = %err, "failed to emit terminal notification");
+                        }
+                    }
+                    TerminalNotificationRoute::Desktop => {
+                        #[cfg(windows)]
+                        if let Err(err) = show_system_notification(
+                            &title,
+                            body.as_deref(),
+                            activation.map(|activation| activation.target),
+                            event_tx,
+                        ) {
+                            warn!(err = %err, "failed to emit system notification");
+                        }
+                        #[cfg(not(windows))]
+                        if let Some(activation) = activation {
+                            let event_tx = event_tx.clone();
+                            let clicked = activation.token;
+                            queue_desktop_notification(DesktopNotification::Clickable {
+                                title,
+                                body,
+                                on_click: std::sync::Arc::new(move || {
+                                    let _ = event_tx.try_send(
+                                        super::events::ClientLoopEvent::NotificationTokenActivated(
+                                            clicked.clone(),
+                                        ),
+                                    );
+                                }),
+                            });
+                        }
+                    }
+                    TerminalNotificationRoute::Rootshell => {
+                        let pane = activation.as_ref().and_then(rootshell_route_pane);
+                        if let Some(activation) = activation {
+                            focus_activations.push(activation.token);
+                        }
+                        ssh_system_info = Some((title, body, pane));
+                    }
+                    TerminalNotificationRoute::Terminal => {
+                        if let Some(activation) = activation {
+                            focus_activations.push(activation.token);
+                        }
+                        if let Err(err) =
+                            crate::terminal_notify::show_notification(&title, body.as_deref())
+                        {
+                            warn!(err = %err, "failed to emit terminal notification");
+                        }
+                    }
                 }
             }
             shell::ClientShellNotificationEffect::System {
@@ -136,7 +295,7 @@ pub(super) fn handle_shell_notification_effects(
                 target,
             } => {
                 if is_ssh_or_remote {
-                    ssh_system_info = Some((title, body));
+                    ssh_system_info = Some((title, body, None));
                 } else {
                     #[cfg(windows)]
                     if let Err(err) =
@@ -147,24 +306,30 @@ pub(super) fn handle_shell_notification_effects(
                     // Keep notifier commands off the client loop so frames (including
                     // the visual bell) and input are never stalled behind them.
                     #[cfg(not(windows))]
-                    queue_desktop_notification(title, body);
+                    queue_desktop_notification(DesktopNotification::Plain { title, body });
                 }
             }
         }
     }
 
     if is_ssh_or_remote {
-        if let Some((title, body)) = ssh_system_info {
+        if let Some((title, body, pane)) = ssh_system_info {
             let status = ssh_sound_status.unwrap_or(crate::rootshell_notify::PushStatus::Info);
-            crate::rootshell_notify::send_push_notification(&title, body.as_deref(), status);
+            crate::rootshell_notify::send_push_notification(
+                &title,
+                body.as_deref(),
+                status,
+                pane.as_deref(),
+            );
         } else if let Some(status) = ssh_sound_status {
-            crate::rootshell_notify::send_push_notification("Herdr", None, status);
+            crate::rootshell_notify::send_push_notification("Herdr", None, status, None);
         }
 
         if ssh_sound_status.is_some() {
             let _ = crate::terminal_effects::write_terminal_bells(&mut io::stdout(), 1);
         }
     }
+    focus_activations
 }
 
 #[cfg(windows)]
@@ -311,5 +476,112 @@ mod tests {
         // This send must run while native delivery is still waiting.
         release.send(()).expect("client loop remained responsive");
         second.await.expect("replacement delivered after original");
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::{
+        rootshell_route_pane, terminal_notification_route, TerminalNotificationContext as Context,
+        TerminalNotificationRoute as Route,
+    };
+    use crate::client::endpoint::{ClientEndpointId, ProfileId};
+    use crate::client::shell::{ClientNotificationActivation, ClientSystemNotificationTarget};
+
+    #[test]
+    fn rootshell_pushes_route_only_to_local_panes() {
+        let activation = |endpoint_id| ClientNotificationActivation {
+            token: "token".into(),
+            target: ClientSystemNotificationTarget {
+                endpoint_id,
+                boot_id: "boot".into(),
+                pane_id: "w1:p2".into(),
+            },
+        };
+        assert_eq!(
+            rootshell_route_pane(&activation(ClientEndpointId::Local)).as_deref(),
+            Some("w1:p2")
+        );
+        let remote = ClientEndpointId::Ssh(ProfileId::generate());
+        assert_eq!(rootshell_route_pane(&activation(remote)), None);
+    }
+
+    fn targeted() -> Context {
+        Context {
+            has_target: true,
+            ..Context::default()
+        }
+    }
+
+    #[test]
+    fn kitty_reports_its_own_clicks_everywhere() {
+        for remote in [false, true] {
+            let context = Context {
+                terminal_reports_clicks: true,
+                terminal_shows_notifications: true,
+                remote,
+                desktop_reports_clicks: true,
+                rootshell: remote,
+                ..targeted()
+            };
+            assert_eq!(
+                terminal_notification_route(context),
+                Route::ReportingTerminal
+            );
+        }
+    }
+
+    #[test]
+    fn terminals_that_show_notifications_keep_their_own_toast() {
+        for remote in [false, true] {
+            let context = Context {
+                terminal_shows_notifications: true,
+                remote,
+                desktop_reports_clicks: true,
+                ..targeted()
+            };
+            assert_eq!(terminal_notification_route(context), Route::Terminal);
+        }
+    }
+
+    #[test]
+    fn rootshell_sessions_push_to_the_device() {
+        let context = Context {
+            terminal_shows_notifications: true,
+            remote: true,
+            desktop_reports_clicks: true,
+            rootshell: true,
+            ..targeted()
+        };
+        assert_eq!(terminal_notification_route(context), Route::Rootshell);
+        let plain_ssh = Context {
+            rootshell: false,
+            ..context
+        };
+        assert_eq!(terminal_notification_route(plain_ssh), Route::Terminal);
+    }
+
+    #[test]
+    fn other_local_terminals_use_a_clickable_desktop_notifier() {
+        let context = Context {
+            desktop_reports_clicks: true,
+            ..targeted()
+        };
+        assert_eq!(terminal_notification_route(context), Route::Desktop);
+        assert_eq!(terminal_notification_route(targeted()), Route::Terminal);
+    }
+
+    #[test]
+    fn untargeted_notifications_keep_the_terminal_escape_outside_windows() {
+        let context = Context {
+            desktop_reports_clicks: true,
+            ..Context::default()
+        };
+        let route = terminal_notification_route(context);
+        if cfg!(windows) {
+            assert_eq!(route, Route::Desktop);
+        } else {
+            assert_eq!(route, Route::Terminal);
+        }
     }
 }

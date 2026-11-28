@@ -726,6 +726,7 @@ pub(crate) enum ClientShellNotificationEffect {
     Terminal {
         title: String,
         body: Option<String>,
+        activation: Option<ClientNotificationActivation>,
     },
     System {
         title: String,
@@ -735,7 +736,14 @@ pub(crate) enum ClientShellNotificationEffect {
     },
 }
 
-#[cfg(windows)]
+/// Lets a clicked notification find its way back to the pane that raised it:
+/// channels that can only carry text hand the token back, the others use the target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClientNotificationActivation {
+    pub(crate) token: String,
+    pub(crate) target: ClientSystemNotificationTarget,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClientSystemNotificationTarget {
     pub(crate) endpoint_id: ClientEndpointId,
@@ -954,6 +962,8 @@ pub(crate) struct ClientShellState {
     pub(super) pending_notifications: Vec<ClientPendingNotification>,
     pub(super) visible_notification: Option<ClientVisibleNotification>,
     pub(super) queued_notifications: VecDeque<ClientVisibleNotification>,
+    pub(super) notification_activations: VecDeque<ClientNotificationActivation>,
+    pub(super) focus_armed_activation: Option<ClientSystemNotificationTarget>,
     pub(super) endpoint_notice_seen: HashSet<ClientEndpointNoticeKey>,
     pub(super) visible_endpoint_notice: Option<ClientVisibleEndpointNotice>,
     pub(super) outer_focused: Option<bool>,
@@ -1124,6 +1134,8 @@ impl ClientShellState {
             pending_notifications: Vec::new(),
             visible_notification: None,
             queued_notifications: VecDeque::new(),
+            notification_activations: VecDeque::new(),
+            focus_armed_activation: None,
             endpoint_notice_seen: HashSet::new(),
             visible_endpoint_notice: None,
             outer_focused: None,
